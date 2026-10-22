@@ -1,5 +1,6 @@
 # detail_engine.py — v6: inklusive MarketCap, Volumen-Metriken, Beta & Short-Quote
 
+# detail_engine.py — korrigierte Importe
 import yfinance as yf
 import pandas as pd
 import numpy as np
