@@ -1,10 +1,8 @@
-# database.py — Globale Aktien-Datenbank v2.0
-# Abdeckung: USA (S&P500, NASDAQ, Dow Jones, Russell) | UK (FTSE100)
-# China (A/H-Shares, HK, ADR) | Südkorea (KOSPI) | Japan (Nikkei)
-# Deutschland (DAX/MDAX/SDAX) | Frankreich (CAC40) | Spanien (IBEX35)
-# Italien (FTSE MIB) | Niederlande (AEX) | Schweiz (SMI)
-# Skandinavien | Sektoren: Energy, Mining, Healthcare, Financials,
-# Tech, Consumer, REIT, Utilities, Sin-Stocks, Emerging Markets
+# database.py — Globale Aktien-Datenbank v2.1 (Erweitert & Aktualisiert)
+# Abdeckung: USA (S&P500, NASDAQ, Dow Jones, Russell, REITs, CEF/BDC) | UK (FTSE100)
+# China/Asien (A/H-Shares, HK, ADR, Indonesien, etc.) | Südkorea (KOSPI) | Japan (Nikkei)
+# Europa (DAX/MDAX/SDAX, CAC40, IBEX35, FTSE MIB, AEX, SMI, Skandinavien)
+# Sektoren: Energy, Mining, Healthcare, Financials, Tech, Consumer, REIT, Utilities, Sin-Stocks, Emerging Markets
 
 TICKER_LISTS = {
 
@@ -23,51 +21,62 @@ TICKER_LISTS = {
         "AXP", "V", "MA", "PYPL", "COF", "USB", "PNC", "TFC",
         "BK", "STT", "FITB", "KEY", "RF", "HBAN",
         "AFL", "MET", "PRU", "ALL", "AIG", "CB", "PGR", "TRV",
-        "CME", "ICE", "NDAQ", "SPGI", "MCO",
+        "CME", "ICE", "NDAQ", "SPGI", "MCO", "USB-PP", "KEY-PJ",
+        "KEY-PI", "WFC-PC", "WFC-PY", "BAC-PK", "BAC-PL", "BAC-PB",
+        "MS-PE", "MS-PI", "MS-PO", "MS-PA", "STT-PG", "HIG-PG",
     ],
     "SP500_HEALTHCARE": [
         "JNJ", "LLY", "UNH", "ABBV", "MRK", "PFE", "TMO", "ABT",
         "DHR", "BMY", "AMGN", "GILD", "VRTX", "REGN", "BIIB",
         "SYK", "BSX", "MDT", "BDX", "EW", "ISRG", "ZBH",
         "HCA", "CI", "CVS", "MCK", "ABC", "CAH", "IDXX",
-        "IQV", "ILMN", "A", "WAT",
+        "IQV", "ILMN", "A", "WAT", "PRGO", "VTRS", "ZTS",
     ],
     "SP500_CONSUMER_STAPLES": [
         "PG", "KO", "PEP", "WMT", "COST", "MDLZ", "PM", "MO",
         "KHC", "GIS", "K", "CPB", "HRL", "CAG", "MKC",
         "CL", "CHD", "CLX", "EL", "KR", "DLTR", "DG",
+        "HSY", "SJM", "TSN", "KMB",
     ],
     "SP500_CONSUMER_DISC": [
         "AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "SBUX", "TJX",
         "BKNG", "MAR", "HLT", "YUM", "CMG", "DPZ", "QSR",
         "F", "GM", "PHM", "DHI", "LEN", "NVR", "TOL",
         "ROST", "RL", "PVH", "EBAY", "ETSY", "RH", "WSM",
+        "LEN-B", "BBY", "ULTA", "DRI", "POOL", "TSCO",
     ],
     "SP500_ENERGY": [
         "XOM", "CVX", "COP", "EOG", "SLB", "HAL", "MPC", "PSX",
         "VLO", "DVN", "FANG", "APA", "CTRA", "OXY", "PBR",
         "MRO", "HES", "BKR", "NOV", "CHRD", "MTDR", "PR", "SM",
+        "EPD", "MPLX", "PAGP", "SUN", "EQT", "SWN", "OKE",
     ],
     "SP500_INDUSTRIALS": [
         "GE", "HON", "UPS", "BA", "LMT", "RTX", "NOC", "GD",
         "CAT", "DE", "EMR", "ETN", "ITW", "PH", "IR", "ROK",
         "AME", "FTV", "XYL", "IDEX", "ROP",
-        "UNP", "CSX", "NSC", "FDX", "PCAR", "GWW",
+        "UNP", "CSX", "NSC", "FDX", "PCAR", "GWW", "WM",
+        "RSG", "FAST", "CTAS", "URI",
     ],
     "SP500_MATERIALS": [
         "LIN", "APD", "ECL", "SHW", "PPG", "NEM", "FCX", "NUE",
         "STLD", "AA", "CF", "MOS", "DOW", "LYB",
         "ALB", "MP", "CTVA", "FMC", "IFF", "AVY", "PKG",
+        "EMN", "WLK", "BALL", "CE", "PKG",
     ],
     "SP500_UTILITIES": [
         "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "PCG",
         "AWK", "WEC", "ES", "FE", "CNP", "AES", "NRG", "ETR",
         "EIX", "PPL", "DTE", "AEE", "CMS", "LNT",
+        "ED", "PCG-PA", "XEL", "PEG", "ATO",
     ],
     "SP500_REITS": [
         "AMT", "PLD", "CCI", "EQIX", "PSA", "O", "DLR", "VICI",
         "SPG", "AVB", "EQR", "MAA", "UDR", "CPT", "ESS",
         "WY", "ARE", "BXP", "KIM", "REG", "FRT", "HST",
+        "OHI", "WPC", "NNN", "EXR", "WELL", "SBAC", "VTR",
+        "DLR-PJ", "DLR-PL", "PSA-PQ", "PSA-PK", "SLG", "SLG-PI",
+        "KRC", "HIW", "DOC", "CUZ", "REXR", "FRT",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -92,6 +101,69 @@ TICKER_LISTS = {
         "SOFI", "AFRM", "COIN", "DKNG", "RBLX", "SNAP",
         "ZM", "DOCU", "OKTA", "NET", "CFLT", "MDB",
         "HOOD", "IONQ", "RXRX", "SOUN", "BBAI",
+    ],
+
+    # ═══════════════════════════════════════════════════════
+    # USA — BDCs, CEFs, PREFERRED & INCOME STOCKS (NEU & INTEGRIERT)
+    # ═══════════════════════════════════════════════════════
+    "USA_INCOME_CEF_BDC_REIT": [
+        "IEP", "DHT", "PDI", "DX", "FSK", "AGNC", "STWD", "OTF",
+        "PTY", "MPL", "PFL", "BXSL", "BHFAP", "OBDC", "RITM", "HTGC",
+        "TRMD", "JPC", "RVT", "NMT", "NZF", "AMBP", "CLM", "BSM",
+        "USAC", "NLY-PG", "SBSW", "SBR", "NAD", "NEA", "TIMB", "KYN",
+        "CSQ", "AXS-PE", "RLJ-PA", "VNO-PM", "EPR", "CALM", "PBC",
+        "TFSL", "ADX", "GIS", "RNR-PF", "ACGLO", "MAA", "OMF", "INSW",
+        "UTG", "VALE", "EVT", "FCPT", "WFC-PC", "ATH-PA", "SCHW-PD",
+        "STT-PG", "MET-PE", "HIW", "SFD", "ARE", "GDV", "TU", "KRC",
+        "LINE", "BCE", "EIX", "KSPI", "OHI", "NNN", "WPC", "MET-PA",
+        "MTN", "MO", "CMCSA", "MAIN", "RLX", "BBDO", "CL", "HR",
+        "LCII", "SUNC", "BCH", "UGI", "SUN", "OGE", "CCI", "LTC",
+        "BEP", "VNOM", "LAZ", "RIO", "BEPC", "APLE", "EMN", "SLG",
+        "AU", "CQP", "CNXC", "VIPS", "FG", "TRN", "C", "BHP",
+        "MC", "PRU", "LNT", "IRT", "TAP", "FIS", "ES", "KMB",
+        "KRG", "NSP", "BX", "BXP", "CLX", "REXR", "SMG", "AES",
+        "ULTA", "HASI", "SMA", "DOC", "CUZ", "ARES", "AESI", "DOW",
+        "NVO", "OKE", "GGAL", "LXP", "AXIA", "NE", "VMRK", "CIB",
+        "BTI", "NWN", "FE", "PBA", "BBY", "KHC", "REYN", "WF",
+        "BOH", "EVRG", "BP", "STEP", "WIT", "WSBC", "AMT", "PSA",
+        "NGG", "SIRI", "KGS", "SR", "HPQ", "VICR", "WAFD", "WPP",
+        "ESS", "PFE", "PEG", "CG", "PB", "SJM", "GRFS", "BVN",
+        "BAP", "DOX", "FRME", "PECO", "RHP", "TIGO", "ELS", "FAF",
+        "USB", "TSN", "MDC", "WLK", "CPB", "TRNO", "INGR", "KMI",
+        "CMS", "HSY", "CHRD", "EGP", "GPC", "PTEN", "BNS", "IVT",
+        "CHT", "EQNR", "CNA", "NTR", "TM", "UBSI", "ACN", "BF-A",
+        "LVS", "FITB", "CPT", "FITBP", "NEE", "EDR", "SRE", "DRH",
+        "INDB", "BAH", "BKU", "BZ", "CVX", "MCD", "TMUS", "UNH",
+        "DRI", "POOL", "RTO", "BRO", "IRM", "KFY", "MFC", "ALV",
+        "AMCR", "RDN", "HD", "SHEL", "FFIN", "MDU", "YMM", "IVZ",
+        "TSCO", "FBP", "FHN", "HOMB", "MAS", "CWA", "FNB", "SWK",
+        "JNJ", "BMO", "HLNE", "UCBI", "TXN", "AEO", "GEF", "SBAC",
+        "KDP", "LW", "CVS", "SHO", "CHCO", "CRBG", "DTM", "YUMC",
+        "IDA", "MGY", "MTDR", "VTRS", "AFL", "EOG", "ALLE", "FHI",
+        "KMT", "LEN", "SSB", "DPZ", "AOS", "FBIN", "LOW", "PR",
+        "SBUX", "WMG", "CURB", "BAC", "HON", "ABT", "CATY", "OTTR",
+        "RBC", "RY", "CBT", "ITW", "MTC", "RGA", "FUTU", "MFG",
+        "GIL", "HAS", "MS", "PRK", "AIG", "BR", "AMX", "VTR",
+        "ABBV", "EWBC", "SLB", "K", "AMGN", "DLB", "UBS", "GNTX",
+        "KO", "PUK", "PG", "SLM", "SM", "ADM", "MRK", "TRI",
+        "CPK", "KSS", "AAP", "VNO", "AVY", "SLGN", "DEO", "SU",
+        "GILD", "IT", "HRI", "MMS", "CNI", "NTRS", "RRR", "ACT",
+        "ACM", "PHIN", "VFC", "NMRK", "RQL", "PRDO", "RCI", "GS",
+        "JPM", "UNP", "FCNCA", "FUL", "CMI", "PSO", "SFBS", "AZN",
+        "CTSH", "MKTX", "NRG", "AHR", "BANF", "SIGI", "CLBK", "SHAW",
+        "CVE", "NOV", "OSK", "R", "VIRT", "BAM", "NXPI", "TFII",
+        "CCL", "BLK", "LPX", "NSC", "WM", "BKH", "BUD", "FDX",
+        "INTU", "THG", "ATAT", "TNET", "XYL", "LOGI", "HCA", "UMBF",
+        "WTFC", "WTTR", "LII", "CSL", "TAC", "EMR", "FDS", "WELL",
+        "CBC", "DGX", "GGG", "GRMN", "EVR", "DCI", "SCHW", "AMP",
+        "ATKR", "RJF", "DHI", "CSX", "EMBJ", "NOC", "PLMR", "SNDR",
+        "CXT", "DLO", "TEX", "LIN", "MWA", "WFRD", "KNX", "PCAR",
+        "YOU", "EQT", "ROK", "SAP", "BALL", "RS", "PH", "BWA",
+        "MSA", "SYK", "BTE", "CHD", "MEOH", "WMS", "RSG", "STE",
+        "PLUS", "AGCO", "NHC", "SNT", "CCK", "NDSN", "RLI", "GWW",
+        "AON", "MSI", "TROW", "TFX", "TNK", "VRSK", "WSFS", "SIMO",
+        "SLDE", "DE", "ASO", "HUBB", "CHH", "EBAY", "ECL", "ZBH",
+        "J", "KLIC", "ABM", "AMER",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -120,25 +192,26 @@ TICKER_LISTS = {
         "WPP.L",  "OCDO.L", "MKS.L",  "NEXT.L", "JD.L",
         "HBR.L",  "IMI.L",  "EXPN.L", "HLMA.L", "WEIR.L",
         "TSCO.L", "SBRY.L", "KGF.L",  "AUTO.L", "III.L", "RKT.L",
+        "LDSCY",  "VODPF",  "VOD",    "RTO",    "PUK",   "GSK",
     ],
 
     # ═══════════════════════════════════════════════════════
-    # CHINA — TECH & INTERNET (US ADR + HK)
+    # CHINA / ASIEN — ADRs & HK (inkl. Ping An / PNGAY)
     # ═══════════════════════════════════════════════════════
     "CHINA_TECH_INTERNET": [
         "BABA",    "TCEHY",   "JD",      "BIDU",    "PDD",
         "NTES",    "BILI",    "IQ",      "VIPS",    "MOMO",
         "YMM",     "FINV",    "ZH",      "TIGR",    "FUTU",
-        "LKNCY",   "TUYA",    "KC",
+        "LKNCY",   "TUYA",    "KC",      "PNGAY",   "HTHT",
         "9988.HK", "0700.HK", "9618.HK", "9888.HK", "9999.HK",
-        "9626.HK", "0992.HK",
+        "9626.HK", "0992.HK", "CSDXF",   "LNGVO",
     ],
     "CHINA_FINANCE_ENERGY_EV": [
         "NIO",     "XPEV",    "LI",      "BEKE",    "YUMC",
         "TAL",     "EDU",     "GOTU",    "DAO",
         "0939.HK", "1398.HK", "3988.HK", "0941.HK", "0728.HK",
         "0762.HK", "2628.HK", "0386.HK", "0857.HK", "1088.HK",
-        "0175.HK", "9868.HK", "2015.HK", "2318.HK",
+        "0175.HK", "9868.HK", "2015.HK",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -151,46 +224,21 @@ TICKER_LISTS = {
         "055550.KS", "032830.KS", "017670.KS", "030200.KS", "015760.KS",
         "096770.KS", "010950.KS", "034220.KS", "009150.KS", "011200.KS",
         "018260.KS", "032640.KS", "011070.KS", "042700.KS", "247540.KS",
-        "086280.KS",
-    ],
-    "KOREA_ADR": [
-        "KEP", "KT", "SKM", "PKX", "HMC",
+        "086280.KS", "KEP", "WF",
     ],
 
     # ═══════════════════════════════════════════════════════
-    # JAPAN — NIKKEI 225 AUSWAHL
+    # JAPAN — NIKKEI 225 & INTERNATIONAL ADRs
     # ═══════════════════════════════════════════════════════
     "NIKKEI_SELECTION": [
-        "7203.T",  # Toyota Motor
-        "6758.T",  # Sony Group
-        "9984.T",  # SoftBank Group
-        "6861.T",  # Keyence
-        "8306.T",  # Mitsubishi UFJ Financial
-        "9432.T",  # NTT
-        "6367.T",  # Daikin Industries
-        "6501.T",  # Hitachi
-        "4519.T",  # Chugai Pharmaceutical
-        "9433.T",  # KDDI
-        "8035.T",  # Tokyo Electron
-        "6594.T",  # Nidec
-        "4543.T",  # Terumo
-        "7751.T",  # Canon
-        "7267.T",  # Honda Motor
-        "6702.T",  # Fujitsu
-        "8411.T",  # Mizuho Financial
-        "7741.T",  # HOYA
-        "4063.T",  # Shin-Etsu Chemical
-        "9983.T",  # Fast Retailing (Uniqlo)
-        "2914.T",  # Japan Tobacco
-        "7974.T",  # Nintendo
-        "4661.T",  # Oriental Land (Disney Japan)
-        "6954.T",  # Fanuc
-        "6971.T",  # Kyocera
-        "5108.T",  # Bridgestone
-        "8801.T",  # Mitsui Fudosan
-        "3382.T",  # Seven & i Holdings
-        "2502.T",  # Asahi Group
-        "4901.T",  # Fujifilm Holdings
+        "7203.T",  "6758.T",  "9984.T",  "6861.T",  "8306.T",
+        "9432.T",  "6367.T",  "6501.T",  "4519.T",  "9433.T",
+        "8035.T",  "6594.T",  "4543.T",  "7751.T",  "7267.T",
+        "6702.T",  "8411.T",  "7741.T",  "4063.T",  "9983.T",
+        "2914.T",  "7974.T",  "4661.T",  "6954.T",  "6971.T",
+        "5108.T",  "8801.T",  "3382.T",  "2502.T",  "4901.T",
+        "TKOMY",   "NTDOY",   "MTSFY",   "ALPMY",   "PCRHY",
+        "DFKUY",   "EBCO",    "SNYYF",   "YACAF",   "OPHYY",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -203,7 +251,8 @@ TICKER_LISTS = {
         "HEI.DE", "HEN3.DE", "HNR1.DE", "IFX.DE", "MBG.DE", "MRK.DE",
         "MTX.DE", "MUV2.DE", "P911.DE", "PAH3.DE", "PUM.DE", "RHM.DE",
         "RWE.DE", "SAP.DE", "SRT3.DE", "SHL.DE", "SIE.DE", "SY1.DE",
-        "TKA.DE", "VNA.DE", "VOW3.DE", "ZAL.DE",
+        "TKA.DE", "VNA.DE", "VOW3.DE", "ZAL.DE", "BSRRF", "BMWYY",
+        "FMS",
     ],
     "MDAX": [
         "BC8.DE", "BNR.DE", "BOSS.DE", "DEQ.DE", "DUE.DE", "EVD.DE",
@@ -221,7 +270,7 @@ TICKER_LISTS = {
         "KLO.DE",  "KWS.DE",  "MLP.DE",  "O2D.DE",  "PBB.DE",
         "PNE3.DE", "PSM.DE",  "QIA.DE",  "SAF.DE",  "SDF.DE",
         "STR.DE",  "TAG.DE",  "TTK.DE",  "VAR1.DE", "VIP.DE",
-        "WUW.DE", "TUI1.DE", "LXS.DE",
+        "WUW.DE",  "TUI1.DE", "LXS.DE",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -235,7 +284,9 @@ TICKER_LISTS = {
         "SAN.PA",   "SU.PA",    "GLE.PA",   "STLA.PA",  "STMPA.PA",
         "HO.PA",    "TTE.PA",   "CA.PA",    "BNP.PA",   "ACA.PA",
         "VIE.PA",   "DG.PA",    "WLN.PA",   "EN.PA",    "FR.PA",
-        "LI.PA",    "URW.PA",   "MT.AS",
+        "LI.PA",    "URW.PA",   "MT.AS",    "CRARY",    "PRNDY",
+        "BNPQY",    "BOUYY",    "VCISY",    "SCGLY",    "PPRUY",
+        "SOCNF",    "HDELY",    "EADSY",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -247,7 +298,7 @@ TICKER_LISTS = {
         "ENG.MC",  "FER.MC",  "GRF.MC",  "IAG.MC",  "IBE.MC",
         "IDR.MC",  "ITX.MC",  "MAP.MC",  "MEL.MC",  "MRL.MC",
         "NTGY.MC", "RED.MC",  "REP.MC",  "SAB.MC",  "SAN.MC",
-        "TEF.MC",  "VIS.MC",
+        "TEF.MC",  "VIS.MC",  "IDEXY",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -259,7 +310,7 @@ TICKER_LISTS = {
         "IG.MI",    "INW.MI",   "ISP.MI",   "LDO.MI",  "MB.MI",
         "MONC.MI",  "PIRC.MI",  "PRY.MI",   "RACE.MI", "REC.MI",
         "SRG.MI",   "STM.MI",   "TEN.MI",   "TIT.MI",  "TRN.MI",
-        "UCG.MI",   "UNI.MI",
+        "UCG.MI",   "UNI.MI",   "SAPMY",    "EURBF",   "GLOF",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -270,6 +321,7 @@ TICKER_LISTS = {
         "ASML.AS",  "HEIA.AS", "HEIO.AS", "IMCD.AS", "INGA.AS",
         "PHIA.AS",  "PRX.AS",  "RAND.AS", "REN.AS",  "SHELL.AS",
         "NN.AS",    "WKL.AS",  "UMG.AS",  "BESI.AS", "LIGHT.AS",
+        "ADRNY",    "AKZOY",   "AAMWY",   "NXPI",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -280,7 +332,7 @@ TICKER_LISTS = {
         "ALC.SW",   "CFR.SW",   "CSGN.SW",  "GEBN.SW",  "GIVN.SW",
         "HOLN.SW",  "KNIN.SW",  "LONN.SW",  "PGHN.SW",  "SGSN.SW",
         "SIKA.SW",  "SLHN.SW",  "SRENH.SW", "UBSG.SW",  "ZURN.SW",
-        "LINDT.SW", "BALN.SW",
+        "LINDT.SW", "BALN.SW",  "LOGI",
     ],
 
     # ═══════════════════════════════════════════════════════
@@ -291,190 +343,28 @@ TICKER_LISTS = {
         "SWED-A.ST", "ATCO-A.ST", "SAND.ST",   "SKF-B.ST",  "ALFA.ST",
         "INVE-B.ST", "ESSITY-B.ST","NDA-SE.ST", "LOOMIS.ST", "HEXA-B.ST",
         "NIBE-B.ST", "HUFV-A.ST", "HUSQ-B.ST", "KINV-B.ST", "SINCH.ST",
-        # Dänemark
         "NOVO-B.CO", "CARL-B.CO", "MAERSK-B.CO","ORSTED.CO","DEMANT.CO",
-        "COLOB.CO",  "GN.CO",     "ROCK-B.CO",
-        # Norwegen
-        "EQNR",      "AKRBP.OL",  "VAR.OL",    "DNO.OL",   "MOWI.OL",
-        "TEL.OL",    "ORK.OL",    "SALM.OL",   "YAR.OL",
-        # Finnland
-        "KNEBV.HE",  "NESTE.HE",  "FORTUM.HE", "WRT1V.HE", "OUT1V.HE",
+        "COLOB.CO",  "GN.CO",     "ROCK-B.CO", "EQNR",      "AKRBP.OL",
+        "VAR.OL",    "DNO.OL",    "MOWI.OL",   "TEL.OL",    "ORK.OL",
+        "SALM.OL",   "YAR.OL",    "KNEBV.HE",  "NESTE.HE",  "FORTUM.HE",
+        "WRT1V.HE",  "OUT1V.HE",  "ATLKY",     "AMKBY",     "VLVLY",
+        "RYAAY",     "NVO",
     ],
 
     # ═══════════════════════════════════════════════════════
-    # EURO STOXX 50
-    # ═══════════════════════════════════════════════════════
-    "EURO_STOXX_50": [
-        "AD.AS",   "AI.PA",   "AIR.PA",  "ALV.DE",  "ASML.AS",
-        "CS.PA",   "BAS.DE",  "BAYN.DE", "BBVA.MC", "SAN.MC",
-        "BMW.DE",  "BNP.PA",  "BN.PA",   "DHL.DE",  "DTE.DE",
-        "ENEL.MI", "ENI.MI",  "EL.PA",   "STLA.PA", "IBE.MC",
-        "ITX.MC",  "IFX.DE",  "INGA.AS", "ISP.MI",  "KER.PA",
-        "KNEBV.HE","OR.PA",   "MC.PA",   "MBG.DE",  "MUV2.DE",
-        "RI.PA",   "PRX.AS",  "SAF.PA",  "SGO.PA",  "SAN.PA",
-        "SAP.DE",  "SU.PA",   "SIE.DE",  "TTE.PA",  "DG.PA",
-        "VOW3.DE", "VNA.DE",  "WKL.AS",  "HER.PA",  "RACE.MI",
-        "UCG.MI",  "ENGI.PA", "VIE.PA",  "ADS.DE",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # ENERGIE & ÖL / GAS (Global)
-    # ═══════════════════════════════════════════════════════
-    "ENERGY_OIL_GAS": [
-        "XOM",     "CVX",     "COP",     "EOG",     "SLB",
-        "HAL",     "MPC",     "PSX",     "VLO",     "DVN",
-        "FANG",    "APA",     "CTRA",    "OXY",     "PBR",
-        "MRO",     "HES",     "BKR",     "CHRD",    "MTDR",
-        "SM",      "PR",      "SHEL.L",  "BP.L",    "TTE.PA",
-        "EQNR",    "AKRBP.OL","VAR.OL",  "DNO.OL",  "OMV.VI",
-        "HBR.L",   "ENI.MI",  "REP.MC",  "0386.HK", "0857.HK",
-        "NESTE.HE","YAR.OL",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # MINING & ROHSTOFFE (Global)
-    # ═══════════════════════════════════════════════════════
-    "MINING_CYCLICALS": [
-        "RIO",    "RIO.L",  "BHP",    "VALE",   "GLNCY",
-        "GLEN.L", "AAL.L",  "FCX",    "NEM",    "GOLD",
-        "AEM",    "GFI",    "ALB",    "SQM",    "CCJ",
-        "CAT",    "DE",     "MMM",    "GE",     "HON",
-        "LMT",    "BA",     "UPS",    "FDX",    "NSC",
-        "UNP",    "EMR",    "ETN",    "ITW",    "DOW",
-        "LYB",    "CTVA",   "NUE",    "STLD",   "AA",
-        "CF",     "MOS",    "F",      "GM",     "STLA",
-        "ANTO.L", "1088.HK","005490.KS",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # IMMOBILIEN — Europa (Bau & REIT)
-    # ═══════════════════════════════════════════════════════
-    "REAL_ESTATE_CONSTRUCTION_EUROPE": [
-        "VNA.DE",  "LEG.DE",  "HOT.DE",  "TAG.DE",  "DWNI.DE",
-        "DG.PA",   "SGO.PA",  "EN.PA",   "LI.PA",   "URW.PA",
-        "BDEV.L",  "PSN.L",   "TW.L",    "BLND.L",  "SGRO.L",
-        "LAND.L",  "BKG.L",   "ACS.MC",  "FER.MC",  "SKAB.ST",
-        "SBB-B.ST","COL.MC",  "MRL.MC",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # VERSORGER — Europa & USA
-    # ═══════════════════════════════════════════════════════
-    "UTILITIES_INFRASTRUCTURE": [
-        "VIE.PA",  "ENGI.PA", "IBE.MC",  "ENEL.MI", "EDP.LS",
-        "ENG.MC",  "REE.MC",  "TER.MI",  "NG.L",    "UU.L",
-        "RWE.DE",  "EOAN.DE", "NEE",     "DUK",     "SO",
-        "D",       "AEP",     "SRE",     "AWK",     "SSE.L",
-        "SVT.L",   "A2A.MI",  "SRG.MI",  "IG.MI",   "FORTUM.HE",
-        "ORSTED.CO","NESTE.HE",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # EMERGING MARKETS — Breite Auswahl
+    # EMERGING MARKETS — Breite Auswahl (Brasilien, Indien, etc.)
     # ═══════════════════════════════════════════════════════
     "EMERGING_MARKETS": [
-        # Brasilien
         "PBR",    "VALE",   "ITUB",   "BBD",    "ABEV",
-        "BRFS",   "EMBR3.SA","PETR4.SA",
-        # Indien (US ADR / Listing)
-        "INFY",   "WIT",    "HDB",    "IBN",    "TTM",
-        "SIFY",   "VEDL",
-        # Südafrika
-        "NPN.JO", "AGL.JO", "FSR.JO", "SBK.JO",
-        # Türkei
-        "TKFEN.IS","BIMAS.IS","EREGL.IS",
-        # Mexiko
-        "AMXL.MX","FEMSAUBD.MX",
-        # Indonesien / Philippinen / Thailand (US ADR)
-        "TLKM",   "BSRR",
-        # Saudi Arabien / GCC
-        "2222.SR", # Saudi Aramco
-        # Israel
-        "CHKP",   "NICE",   "CHL",    "ESLT",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # HEALTHCARE & PHARMA (Global)
-    # ═══════════════════════════════════════════════════════
-    "HEALTHCARE_PHARMA": [
-        "JNJ",    "PFE",    "ABBV",   "LLY",    "MRK",
-        "NVO",    "AZN",    "GSK",    "SYK",    "UNH",
-        "NOVN.SW","ROG.SW", "SAN.PA", "BAY.DE", "BAYN.DE",
-        "AZN.L",  "GSK.L",  "4519.T", "4543.T", "REC.MI",
-        "GRF.MC",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # FINANCIALS & PAYMENTS (Global)
-    # ═══════════════════════════════════════════════════════
-    "FINANCIALS_PAYMENTS": [
-        "JPM",    "BAC",    "V",      "MA",     "AXP",
-        "BLK",    "MS",     "GS",     "HSBC",   "HSBA.L",
-        "STAN.L", "LLOY.L", "BARC.L", "BNP.PA", "SAN.MC",
-        "BBVA.MC","UCG.MI", "ISP.MI", "DBK.DE", "CBK.DE",
-        "ADYEN.AS","8306.T","8411.T", "105560.KS","055550.KS",
-        "0939.HK","1398.HK",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # CONSUMER STAPLES (Global)
-    # ═══════════════════════════════════════════════════════
-    "CONSUMER_STAPLES": [
-        "PG",     "KO",     "PEP",    "WMT",    "COST",
-        "NSRGY",  "UL",     "CL",     "KHC",    "ULVR.L",
-        "NESN.SW","BN.PA",  "DGE.L",  "HEIA.AS","CARL-B.CO",
-        "NOVO-B.CO","3382.T","2502.T","TSCO.L", "MKS.L",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # REITS — USA & Global
-    # ═══════════════════════════════════════════════════════
-    "REITS_REAL_ESTATE": [
-        "O",   "AMT",  "PLD",  "CCI",  "SPG",
-        "VICI","DLR",  "PSA",  "EQIX", "AVB",
-        "EQR", "MAA",  "ARE",  "BXP",  "WY",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # CRYPTO & FINTECH (Börsengelistet)
-    # ═══════════════════════════════════════════════════════
-    "CRYPTO_FINTECH": [
-        "COIN",   "MSTR",   "RIOT",   "MARA",   "CLSK",
-        "HUT",    "BITF",   "CIFR",   "WULF",   "IREN",
-        "HOOD",   "SOFI",   "AFRM",   "UPST",   "LC",
-        "SQ",     "PYPL",   "ADYEN.AS",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # EV & CLEAN ENERGY (Global)
-    # ═══════════════════════════════════════════════════════
-    "EV_CLEAN_ENERGY": [
-        "TSLA",   "RIVN",   "LCID",   "NIO",    "XPEV",
-        "LI",     "NKLA",   "FSR",    "BLNK",   "CHPT",
-        "EVGO",   "FCEL",   "PLUG",   "BE",     "ENPH",
-        "SEDG",   "ARRY",   "NEE",    "ORSTED.CO","IBE.MC",
-        "EOAN.DE","RWE.DE", "NIBE-B.ST","0175.HK","9868.HK",
-        "2015.HK","066570.KS","051910.KS","006400.KS",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # DEFENSE & RÜSTUNG (Global)
-    # ═══════════════════════════════════════════════════════
-    "DEFENSE_AEROSPACE": [
-        "LMT",    "RTX",    "NOC",    "GD",     "BA",
-        "HII",    "L3T",    "TDG",    "HEI",    "HEICO",
-        "RHM.DE", "MTX.DE", "AIR.DE", "SAF.PA", "HO.PA",
-        "BA.L",   "RR.L",   "LDO.MI", "ESLT",
-    ],
-
-    # ═══════════════════════════════════════════════════════
-    # LUXURY & FASHION (Global)
-    # ═══════════════════════════════════════════════════════
-    "LUXURY_FASHION": [
-        "MC.PA",  "RMS.PA", "KER.PA", "RACE.MI","MONC.MI",
-        "OR.PA",  "EL.PA",  "LVMH.PA","CFR.SW",  "LINDT.SW",
-        "ADS.DE", "PUM.DE", "NKE",    "RL",      "TPR",
-        "CPRI",   "TIF",    "EL",
+        "BRFS",   "EMBR3.SA","PETR4.SA","INFY",   "WIT",
+        "HDB",    "IBN",    "TTM",    "SIFY",   "VEDL",
+        "NPN.JO", "AGL.JO", "FSR.JO", "SBK.JO", "TKFEN.IS",
+        "BIMAS.IS","EREGL.IS","AMXL.MX","FEMSAUBD.MX","TLKM",
+        "BSRR",   "2222.SR","CHKP",   "NICE",   "CHL",
+        "ESLT",   "BSBR",   "BBDO",   "UNLRF",  "BCRFY",
+        "FMTYP",  "TIMB",   "GGAL",   "CIB",    "IMPUY",
+        "HMY",    "GARPF",  "EMBJ",   "WMLWY",  "BVN",
+        "BAP",    "AGNC",
     ],
 }
 
@@ -482,18 +372,12 @@ TICKER_LISTS = {
 # WÄHRUNGS-MAPPING nach Ticker-Suffix
 # ═══════════════════════════════════════════════════════════════
 CURRENCY_MAP = {
-    # Euro-Raum
     ".DE": "€",  ".PA": "€",  ".MC": "€",  ".MI": "€",
     ".AS": "€",  ".VI": "€",  ".LS": "€",  ".HE": "€",
-    # Britisches Pfund
     ".L":  "£",
-    # Schweizer Franken
     ".SW": "CHF",
-    # Skandinavien
     ".OL": "NOK", ".ST": "SEK", ".CO": "DKK",
-    # Asien
     ".T":  "¥",   ".HK": "HK$", ".KS": "₩",
-    # Sonstige
     ".JO": "ZAR", ".SA": "BRL", ".MX": "MXN",
     ".IS": "TRY", ".SR": "SAR",
 }
@@ -509,7 +393,7 @@ def get_currency(ticker: str) -> str:
 
 
 def get_all_tickers() -> list:
-    """Gibt alle einzigartigen Ticker in fester (deterministischer) Reihenfolge zurück."""
+    """Gibt alle einzigartigen Ticker in fester Reihenfolge zurück."""
     seen   = set()
     result = []
     for tickers in TICKER_LISTS.values():
@@ -538,11 +422,7 @@ def get_ticker_count() -> int:
 _TICKER_TO_GROUP = None
 
 def get_group_for_ticker(ticker: str) -> str | None:
-    """
-    Gibt die (erste) Gruppe zurück, in der ein Ticker geführt wird.
-    Wird für die Berechnung der relativen Stärke genutzt (Ticker vs.
-    Durchschnitt seiner Peer-Gruppe im selben Scan-Lauf).
-    """
+    """Gibt die (erste) Gruppe zurück, in der ein Ticker geführt wird."""
     global _TICKER_TO_GROUP
     if _TICKER_TO_GROUP is None:
         _TICKER_TO_GROUP = {}
@@ -553,10 +433,8 @@ def get_group_for_ticker(ticker: str) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REGIONEN (für die zwei Tages-Mails) und Mehrfach-Gruppen
+# REGIONEN & FILTER
 # ─────────────────────────────────────────────────────────────────────────────
-# Europa/Asien-Mail: alles, was nach Xetra/Euronext/LSE-Schluss + Asien-Schluss fertig ist.
-# USA-Mail: US-Listings (inkl. ADRs wie PBR) sowie Amerika (.SA, .MX).
 _EU_ASIA_SUFFIXES = (".DE", ".PA", ".MC", ".MI", ".AS", ".VI", ".LS", ".HE", ".L",
                      ".SW", ".OL", ".ST", ".CO", ".IS", ".JO", ".SR",
                      ".T", ".HK", ".KS")
@@ -576,5 +454,5 @@ def get_tickers_by_region(region: str) -> list:
 
 
 def get_groups_for_ticker(ticker: str) -> list:
-    """ALLE Gruppen, in denen ein Ticker geführt wird (308 Ticker stehen in mehreren Listen)."""
+    """ALLE Gruppen, in denen ein Ticker geführt wird."""
     return [g for g, ts in TICKER_LISTS.items() if ticker in ts]
