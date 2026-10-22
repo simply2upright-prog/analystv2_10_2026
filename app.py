@@ -13,6 +13,7 @@ from engine import (get_analysis, send_mail_report, classify_signal,
                     get_all_futures_groups, get_futures_by_group,
                     analyze_trend_hit_rate)
 from detail_engine import get_detail_analysis, compute_hit_rate
+from engine import MIN_HISTORY_N, FORWARD_DAYS
 from ticker_search import search_ticker, label_to_ticker, get_display_name
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
@@ -73,6 +74,134 @@ def _macd_badge(turn) -> str:
     return "<span style='background:#7f8c8d;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700'>KEINE UMKEHR</span>"
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
+def render_side_analysis(side, entry_sigs, sig_history, df_full, cur, sel_tf):
+    """Trefferquoten-Analyse für EINE Seite ('buy' = Boden, 'sell' = Top): Gauge, Tabelle, Details."""
+    is_buy = side == "buy"
+    w_move   = "Trendwende (+5% oder +10%)" if is_buy else "Rückgang (−5% oder −10%)"
+    lbl_ok   = "✅ Trendwenden" if is_buy else "✅ Kursrückgänge"
+    lbl_bad  = "❌ Kein Boden" if is_buy else "❌ Kein Top"
+    col_fav  = "Max Gewinn" if is_buy else "Max Rückgang"
+    col_adv  = "Max Verlust" if is_buy else "Max Anstieg"
+
+    if not entry_sigs:
+        st.info("Noch keine historischen " + ("Einstiegs" if is_buy else "Verkaufs") +
+                "signale im Datenzeitraum erkennbar.")
+    else:
+        st.markdown("#### 🎯 Trefferquote: " + ("Hat der Boden gehalten?" if is_buy else "Hat das Top gehalten?"))
+        st.caption(f"{len(entry_sigs)} unabhängige historische Signale (je Extrem-Phase eines, Einstieg zum nächsten "
+                   f"Open) · prüft, ob innerhalb von {FORWARD_DAYS} Tagen eine {w_move} stattfand. "
+                   f"Ohne Gebühren/Spreads.")
+        hr = compute_hit_rate(entry_sigs, df_full, forward_days=FORWARD_DAYS, side=side)
+
+        if hr["total"] > 0:
+            rate_pct = hr["rate"] * 100
+            base, edge = hr.get("baseline"), hr.get("edge")
+            if hr["total"] < MIN_HISTORY_N:
+                rate_color, rate_label = "#8a94a6", f"⚪ Zu wenige Signale (n={hr['total']})"
+            elif edge is not None:
+                ep = edge * 100
+                if ep >= 10:
+                    rate_color, rate_label = "#1a9e3f", "🟢 Deutlich besser als Zufall"
+                elif ep > 0:
+                    rate_color, rate_label = "#f39c12", "🟡 Kaum besser als Zufall"
+                else:
+                    rate_color, rate_label = "#c0392b", "🔴 Nicht besser als Zufall"
+            else:
+                rate_color, rate_label = "#f39c12", "🟡 Ohne Zufalls-Vergleich"
+            thr_val = base * 100 if base is not None else 65
+
+            hc1, hc2 = st.columns([1, 2])
+            with hc1:
+                fig_hr = go.Figure(go.Indicator(
+                    mode="gauge+number", value=rate_pct,
+                    number={"suffix": "%", "font": {"size": 48, "color": rate_color, "family": "Arial Black"}},
+                    title={"text": f"Trefferquote<br><span style='font-size:13px;color:{rate_color}'>{rate_label}</span>",
+                           "font": {"size": 15, "color": "white"}},
+                    gauge={"axis": {"range": [0, 100]}, "bar": {"color": rate_color}, "bgcolor": "#161b22",
+                           "steps": [{"range": [0, 45], "color": "#2d1b1b"},
+                                     {"range": [45, 65], "color": "#2d2a1b"},
+                                     {"range": [65, 100], "color": "#1b2d1b"}],
+                           "threshold": {"line": {"color": "white", "width": 3}, "value": thr_val}}))
+                fig_hr.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={"color": "white"}, height=280)
+                st.plotly_chart(fig_hr, use_container_width=True, key=f"hr_gauge_{side}")
+                if base is not None:
+                    st.caption(f"Weiße Linie = Zufallsquote dieses Tickers ({base*100:.0f}%): so oft erreicht "
+                               f"JEDER beliebige Tag {FORWARD_DAYS} Tage später dieselbe Bewegung.")
+
+            with hc2:
+                hm1, hm2, hm3, hm4 = st.columns(4)
+                hm1.metric("Signale", hr["total"])
+                hm2.metric(lbl_ok, hr["hits"], delta=f"+{hr['hits']}", delta_color="normal")
+                hm3.metric(lbl_bad, hr["misses"], delta=f"-{hr['misses']}", delta_color="inverse")
+                if base is not None:
+                    hm4.metric("Zufallsquote", f"{base*100:.0f}%",
+                               delta=f"{edge*100:+.0f} Pkt Edge" if edge is not None else None,
+                               delta_color="normal")
+
+                if hr["details"]:
+                    row_colors = {"strong": "#1a4d2e", "weak": "#4d3d00", "fail": "#4d1a1a",
+                                  "sideways": "#2d2d2d", "new": "#1a2d4d"}
+                    rows_html = ""
+                    for d in hr["details"]:
+                        rc = d.get("result_code", "sideways")
+                        bg = row_colors.get(rc, "#222")
+                        mg, ml = d.get("max_gain_pct"), d.get("max_loss_pct")
+                        if is_buy:
+                            mg_str = f"+{mg:.1f}%" if mg is not None else "–"
+                            ml_str = f"{ml:.1f}%" if ml is not None else "–"
+                        else:   # Verkauf: günstig = Kurs fällt, ungünstig = Kurs steigt
+                            mg_str = f"−{mg:.1f}%" if mg is not None else "–"
+                            ml_str = f"+{abs(ml):.1f}%" if ml is not None else "–"
+                        date_str = d["entry_date"].strftime("%d.%m.%Y") if hasattr(d["entry_date"], "strftime") else str(d["entry_date"])
+                        txt_col = "4ade80" if "strong" in rc else "fbbf24" if "weak" in rc else "f87171" if "fail" in rc else "94a3b8"
+                        rows_html += (
+                            f"<tr style='background:{bg}'>"
+                            f"<td style='padding:7px 10px;color:#ccc'>{date_str}</td>"
+                            f"<td style='padding:7px 10px;color:#ccc;text-align:right'>{d['entry_price']:.2f} {cur}</td>"
+                            f"<td style='padding:7px 10px;font-weight:700;color:#{txt_col}'>{d['result']}</td>"
+                            f"<td style='padding:7px 10px;color:#4ade80;text-align:right'>{mg_str}</td>"
+                            f"<td style='padding:7px 10px;color:#f87171;text-align:right'>{ml_str}</td></tr>")
+                    st.markdown(
+                        f"<div style='overflow-x:auto'><table style='border-collapse:collapse;width:100%;font-size:12px;font-family:sans-serif'>"
+                        f"<thead><tr style='background:#1e2235;color:#8892a4;font-size:10px;text-transform:uppercase'>"
+                        f"<th style='padding:8px 10px'>{'Einstieg' if is_buy else 'Verkauf'}</th>"
+                        f"<th style='padding:8px 10px;text-align:right'>Preis</th>"
+                        f"<th style='padding:8px 10px'>Ergebnis</th>"
+                        f"<th style='padding:8px 10px;text-align:right'>{col_fav}</th>"
+                        f"<th style='padding:8px 10px;text-align:right'>{col_adv}</th>"
+                        f"</tr></thead><tbody>{rows_html}</tbody></table></div>", unsafe_allow_html=True)
+
+        with st.expander(f"📋 {len(entry_sigs)} historische " + ("Einstiegs" if is_buy else "Verkaufs") + "signale im Detail", expanded=False):
+            if is_buy:
+                st.caption("Trigger 'MACD' = Histogramm hat nach oben gedreht (eigentliches Kaufsignal). "
+                           "Trigger 'Preis' = MACD hat im Fenster nicht gedreht, der Kurs liegt aber bereits +2% über dem laufenden Tief.")
+            else:
+                st.caption("Trigger 'MACD' = Histogramm hat nach unten gedreht (eigentliches Verkaufssignal). "
+                           "Trigger 'Preis' = MACD hat im Fenster nicht gedreht, der Kurs liegt aber bereits 2% unter dem laufenden Hoch.")
+            rows = []
+            for e in entry_sigs[-12:]:
+                f = lambda x: x.strftime("%d.%m.%Y") if hasattr(x, "strftime") else str(x)
+                rows.append({"Signal-Datum": f(e["signal_date"]), "Signal-Preis": f"{e['signal_price']:.2f} {cur}",
+                             "Trigger": e.get("trigger", "–"),
+                             ("Einstieg-Datum" if is_buy else "Verkauf-Datum"): f(e["entry_date"]),
+                             ("Einstieg-Preis" if is_buy else "Verkauf-Preis"): f"{e['entry_price']:.2f} {cur}",
+                             "Vorlauf": f"{e['days_to_entry']} Tage"})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            ei1, ei2, ei3 = st.columns(3)
+            ei1.metric("Ø Vorlauf Signal→Ausführung", f"{round(np.mean([e['days_to_entry'] for e in entry_sigs]), 1)} Tage")
+            ei2.metric("Ø Bestätigungs-Anstieg" if is_buy else "Ø Bestätigungs-Rückgang",
+                       f"{'+' if is_buy else '−'}{abs(round(np.mean([e['upside_pct'] for e in entry_sigs]), 1))}%")
+            ei3.metric("Signale gesamt", len(entry_sigs))
+
+    if sig_history:
+        with st.expander(f"📅 {len(sig_history)} historische Rohtreffer ({'Kauf' if is_buy else 'Verkauf'}, Zeitraum: {sel_tf})", expanded=False):
+            st.dataframe(pd.DataFrame([{
+                "Datum": s["date"].strftime("%d.%m.%Y") if hasattr(s["date"], "strftime") else str(s["date"]),
+                "Preis": f"{s['price']:.2f} {cur}", "StochRSI": s["StochRSI"], "CCI": s["CCI"],
+                "MACD": s.get("MACD_Turn") or "–", "Score": f"{s['score']}/4"} for s in sig_history]),
+                hide_index=True, use_container_width=True)
+
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🚀 Scanner", "📊 Detail-Analyse", "📐 Formations-Check",
     "🛢️ Rohstoffe & Futures", "📅 Automation"
@@ -268,6 +397,8 @@ with tab2:
             targets = data.get("Targets", {})
             sig_history = data.get("Signal_History", [])
             entry_sigs  = data.get("Entry_Signals", [])
+            sig_history_sell = data.get("Signal_History_Sell", [])
+            entry_sigs_sell  = data.get("Entry_Signals_Sell", [])
 
             fig = make_subplots(
                 rows=7, cols=1, shared_xaxes=True, vertical_spacing=0.02,
@@ -296,7 +427,7 @@ with tab2:
                     x=[s["date"] for s in sig_in_range],
                     y=[s["price"] for s in sig_in_range],
                     mode="markers",
-                    name="Signal-Treffer",
+                    name="Signal-Treffer Kauf",
                     marker=dict(color="#3b82f6", size=10, symbol="circle",
                                 line=dict(color="#ffffff", width=2)),
                     hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Preis: %{y:.2f}<br>Signal-Cluster<extra></extra>",
@@ -309,19 +440,37 @@ with tab2:
                 fig.add_trace(go.Scatter(
                     x=[e["entry_date"] for e in entry_in_range],
                     y=[e["entry_price"] for e in entry_in_range],
-                    mode="markers+text",
-                    name="Einstieg",
-                    text=["▲" for _ in entry_in_range],
-                    textposition="bottom center",
-                    textfont=dict(color="#4ade80", size=14),
+                    mode="markers", name="Einstieg (Kauf)",
+                    customdata=[[e["days_to_entry"], e.get("trigger", "–")] for e in entry_in_range],
                     marker=dict(color="#4ade80", size=12, symbol="triangle-up",
                                 line=dict(color="#ffffff", width=1.5)),
-                    hovertemplate=(
-                        "<b>Einstieg %{x|%d.%m.%Y}</b><br>"
-                        "Preis: %{y:.2f}<br>"
-                        "Vorlauf: " + "<br>".join([f"{e['days_to_entry']}d nach Signal" for e in entry_in_range]) +
-                        "<extra></extra>"
-                    ),
+                    hovertemplate=("<b>Einstieg %{x|%d.%m.%Y}</b><br>Preis: %{y:.2f}<br>"
+                                   "%{customdata[0]} Tage nach Signal · Trigger %{customdata[1]}<extra></extra>"),
+                ), row=1, col=1)
+
+            # ── Verkaufssignale: orange Punkte = Rohtreffer, rote Dreiecke = Verkauf ──
+            sell_sig_in_range = [s_ for s_ in sig_history_sell if len(df_p)>0 and s_["date"] >= df_p.index[0]]
+            if sell_sig_in_range:
+                fig.add_trace(go.Scatter(
+                    x=[s_["date"] for s_ in sell_sig_in_range],
+                    y=[s_["price"] for s_ in sell_sig_in_range],
+                    mode="markers", name="Signal-Treffer Verkauf",
+                    marker=dict(color="#f97316", size=10, symbol="circle",
+                                line=dict(color="#ffffff", width=2)),
+                    hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Preis: %{y:.2f}<br>Verkaufs-Cluster<extra></extra>",
+                ), row=1, col=1)
+            sell_in_range = [e for e in entry_sigs_sell if
+                             len(df_p)>0 and e["entry_date"] >= df_p.index[0]]
+            if sell_in_range:
+                fig.add_trace(go.Scatter(
+                    x=[e["entry_date"] for e in sell_in_range],
+                    y=[e["entry_price"] for e in sell_in_range],
+                    mode="markers", name="Verkauf",
+                    customdata=[[e["days_to_entry"], e.get("trigger", "–")] for e in sell_in_range],
+                    marker=dict(color="#ef4444", size=12, symbol="triangle-down",
+                                line=dict(color="#ffffff", width=1.5)),
+                    hovertemplate=("<b>Verkauf %{x|%d.%m.%Y}</b><br>Preis: %{y:.2f}<br>"
+                                   "%{customdata[0]} Tage nach Signal · Trigger %{customdata[1]}<extra></extra>"),
                 ), row=1, col=1)
 
             # ── Fibonacci & Zielkurs-Linien ────────────────────────
@@ -449,146 +598,14 @@ with tab2:
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # ── Trefferquoten-Analyse — direkt nach dem Chart, das ist die
-            #    wichtigste Kennzahl: "hat dieses Signal historisch funktioniert?" ──
-            if entry_sigs:
-                st.divider()
-                st.markdown("#### 🎯 Trefferquoten-Analyse: Hat der Boden gehalten?")
-                st.caption(f"{len(entry_sigs)} unabhängige historische Trades · prüft ob nach jedem Einstieg "
-                           f"innerhalb von 40 Tagen eine Trendwende (+5% oder +10%) stattgefunden hat.")
-
-                hr = compute_hit_rate(entry_sigs, df_full, forward_days=40)
-
-                if hr["total"] > 0:
-                    rate_pct = hr["rate"] * 100
-                    # Farbige Gesamtbewertung
-                    if rate_pct >= 65:
-                        rate_color = "#1a9e3f"
-                        rate_label = "🟢 Zuverlässiges Signal"
-                    elif rate_pct >= 45:
-                        rate_color = "#f39c12"
-                        rate_label = "🟡 Mittelmäßig zuverlässig"
-                    else:
-                        rate_color = "#c0392b"
-                        rate_label = "🔴 Wenig zuverlässig"
-
-                    # Gauge + Metriken
-                    hc1, hc2 = st.columns([1, 2])
-                    with hc1:
-                        pass  # go already imported
-                        fig_hr = go.Figure(go.Indicator(
-                            mode="gauge+number",
-                            value=rate_pct,
-                            number={"suffix": "%", "font": {"size": 48, "color": rate_color, "family": "Arial Black"}},
-                            title={"text": f"Trefferquote<br><span style='font-size:13px;color:{rate_color}'>{rate_label}</span>",
-                                   "font": {"size": 15, "color": "white"}},
-                            gauge={
-                                "axis": {"range": [0, 100]},
-                                "bar":  {"color": rate_color},
-                                "bgcolor": "#161b22",
-                                "steps": [
-                                    {"range": [0, 45],  "color": "#2d1b1b"},
-                                    {"range": [45, 65], "color": "#2d2a1b"},
-                                    {"range": [65, 100],"color": "#1b2d1b"},
-                                ],
-                                "threshold": {"line": {"color": "white", "width": 3}, "value": 65},
-                            }
-                        ))
-                        fig_hr.update_layout(paper_bgcolor="rgba(0,0,0,0)", font={"color": "white"}, height=280)
-                        st.plotly_chart(fig_hr, use_container_width=True)
-
-                    with hc2:
-                        hm1, hm2, hm3 = st.columns(3)
-                        hm1.metric("Analysierte Signale", hr["total"])
-                        hm2.metric("✅ Trendwenden", hr["hits"],
-                                   delta=f"+{hr['hits']}", delta_color="normal")
-                        hm3.metric("❌ Kein Boden", hr["misses"],
-                                   delta=f"-{hr['misses']}", delta_color="inverse")
-
-                        # Detailtabelle mit Farbmarkierung
-                        if hr["details"]:
-                            row_colors = {
-                                "strong":   "#1a4d2e",   # dunkelgrün
-                                "weak":     "#4d3d00",   # dunkelgelb
-                                "fail":     "#4d1a1a",   # dunkelrot
-                                "sideways": "#2d2d2d",   # grau
-                                "new":      "#1a2d4d",   # dunkelblau
-                            }
-                            rows_html = ""
-                            for d in hr["details"]:
-                                rc  = d.get("result_code", "sideways")
-                                bg  = row_colors.get(rc, "#222")
-                                mg  = d.get("max_gain_pct")
-                                ml  = d.get("max_loss_pct")
-                                mg_str = f"+{mg:.1f}%" if mg is not None else "–"
-                                ml_str = f"{ml:.1f}%" if ml is not None else "–"
-                                date_str = d["entry_date"].strftime("%d.%m.%Y") if hasattr(d["entry_date"],"strftime") else str(d["entry_date"])
-                                rows_html += (
-                                    f"<tr style='background:{bg}'>"
-                                    f"<td style='padding:7px 10px;color:#ccc'>{date_str}</td>"
-                                    f"<td style='padding:7px 10px;color:#ccc;text-align:right'>{d['entry_price']:.2f} {cur}</td>"
-                                    f"<td style='padding:7px 10px;font-weight:700;color:#{'4ade80' if 'strong' in rc else 'fbbf24' if 'weak' in rc else 'f87171' if 'fail' in rc else '94a3b8'}'>{d['result']}</td>"
-                                    f"<td style='padding:7px 10px;color:#4ade80;text-align:right'>{mg_str}</td>"
-                                    f"<td style='padding:7px 10px;color:#f87171;text-align:right'>{ml_str}</td>"
-                                    f"</tr>"
-                                )
-                            st.markdown(
-                                f"<div style='overflow-x:auto'>"
-                                f"<table style='border-collapse:collapse;width:100%;font-size:12px;font-family:sans-serif'>"
-                                f"<thead><tr style='background:#1e2235;color:#8892a4;font-size:10px;text-transform:uppercase'>"
-                                f"<th style='padding:8px 10px'>Einstieg</th>"
-                                f"<th style='padding:8px 10px;text-align:right'>Preis</th>"
-                                f"<th style='padding:8px 10px'>Ergebnis</th>"
-                                f"<th style='padding:8px 10px;text-align:right'>Max Gewinn</th>"
-                                f"<th style='padding:8px 10px;text-align:right'>Max Verlust</th>"
-                                f"</tr></thead><tbody>{rows_html}</tbody></table></div>",
-                                unsafe_allow_html=True
-                            )
-            else:
-                st.info("Noch keine historischen Einstiegssignale im gewählten Datenzeitraum erkennbar.")
-
-            # ── Einstiegszeitpunkte im Detail (aufklappbar) ─────────
-            if entry_sigs:
-                with st.expander(f"📋 {len(entry_sigs)} historische Einstiegssignale im Detail", expanded=False):
-                    st.caption("Trigger 'MACD' = Histogramm hat gedreht (eigentliches Kaufsignal deiner Strategie). "
-                               "Trigger 'Preis' = MACD hat im Fenster nicht gedreht, Kurs hat sich aber "
-                               "bereits +2% über dem lokalen Tief stabilisiert (Ersatzkriterium).")
-                    entry_rows = []
-                    for e in entry_sigs[-12:]:
-                        sd = e["signal_date"].strftime("%d.%m.%Y") if hasattr(e["signal_date"],"strftime") else str(e["signal_date"])
-                        ed = e["entry_date"].strftime("%d.%m.%Y")  if hasattr(e["entry_date"],"strftime")  else str(e["entry_date"])
-                        entry_rows.append({
-                            "Signal-Datum":   sd,
-                            "Signal-Preis":   f"{e['signal_price']:.2f} {cur}",
-                            "Trigger":        e.get("trigger", "–"),
-                            "Einstieg-Datum": ed,
-                            "Einstieg-Preis": f"{e['entry_price']:.2f} {cur}",
-                            "Vorlauf":        f"{e['days_to_entry']} Tage",
-                        })
-                    if entry_rows:
-                        e_df = pd.DataFrame(entry_rows)
-                        st.dataframe(e_df, hide_index=True, use_container_width=True)
-                        avg_days = round(np.mean([e["days_to_entry"] for e in entry_sigs]), 1)
-                        avg_up   = round(np.mean([e["upside_pct"]    for e in entry_sigs]), 1)
-                        ei1,ei2,ei3 = st.columns(3)
-                        ei1.metric("Ø Vorlauf Signal→Einstieg", f"{avg_days} Tage")
-                        ei2.metric("Ø Bestätigungs-Anstieg",    f"+{avg_up}%")
-                        ei3.metric("Einstieg-Signale gesamt",   len(entry_sigs))
-
-            # ── Historische Signal-Treffer (roh, vor Deduplizierung) ─
-            if sig_history:
-                with st.expander(f"📅 {len(sig_history)} historische Rohtreffer der Extremwert-Kriterien (Zeitraum: {sel_tf})", expanded=False):
-                    sig_df = pd.DataFrame([
-                        {
-                            "Datum":     s["date"].strftime("%d.%m.%Y") if hasattr(s["date"],"strftime") else str(s["date"]),
-                            "Preis":     f"{s['price']:.2f} {cur}",
-                            "StochRSI":  s["StochRSI"],
-                            "CCI":       s["CCI"],
-                            "MACD":      s.get("MACD_Turn") or "–",
-                            "Score":     f"{s['score']}/4",
-                        } for s in sig_history
-                    ])
-                    st.dataframe(sig_df, hide_index=True, use_container_width=True)
+            # ── Trefferquoten-Analyse — Kauf (Boden) und Verkauf (Top) getrennt ──
+            st.divider()
+            t_buy, t_sell = st.tabs([f"🟢 Kauf · {len(entry_sigs)} Signale",
+                                     f"🔴 Verkauf · {len(entry_sigs_sell)} Signale"])
+            with t_buy:
+                render_side_analysis("buy", entry_sigs, sig_history, df_full, cur, sel_tf)
+            with t_sell:
+                render_side_analysis("sell", entry_sigs_sell, sig_history_sell, df_full, cur, sel_tf)
 
             # ── Muster & Targets ──────────────────────────────────
             if data.get("Patterns"):
