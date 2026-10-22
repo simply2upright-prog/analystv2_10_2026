@@ -7,7 +7,6 @@ import re
 def _norm(s: str) -> str:
     """Kleinbuchstaben, Umlaute normalisieren, Sonderzeichen entfernen."""
     s = s.lower().strip()
-    # Umlaute → ASCII
     replacements = {
         'ä':'ae','ö':'oe','ü':'ue','ß':'ss',
         'é':'e','è':'e','ê':'e','ë':'e',
@@ -16,13 +15,12 @@ def _norm(s: str) -> str:
     }
     for ch, rep in replacements.items():
         s = s.replace(ch, rep)
-    # Satzzeichen entfernen außer Punkt, Bindestrich
     s = re.sub(r"[&'\"]", '', s)
     return s
 
 # ── Ticker → [Name, Aliases] ────────────────────────────────────────────────
 TICKER_NAMES: dict[str, list[str]] = {
-    # ── USA TECH ────────────────────────────────────────────────────────────
+    # ── USA & GLOBALE WERTE (Auszug aus deinen Screenern) ───────────────────
     "AAPL":   ["Apple"],
     "MSFT":   ["Microsoft"],
     "NVDA":   ["Nvidia"],
@@ -31,6 +29,33 @@ TICKER_NAMES: dict[str, list[str]] = {
     "META":   ["Meta", "Facebook"],
     "AMZN":   ["Amazon"],
     "TSLA":   ["Tesla"],
+    "PNGAY":  ["Ping An", "Ping An Insurance"],
+    "IEP":    ["Icahn Enterprises"],
+    "RVT":    ["Royce Small-Cap Trust"],
+    "UTF":    ["Cohen Steers Infrastructure"],
+    "ACP":    ["Aberdeen Income Credit"],
+    "PDX":    ["Pimco Dynamic Income"],
+    "DX":     ["Dynex Capital"],
+    "UNLRF":  ["Unilever PLC"],
+    "FSK":    ["FS KKR Capital"],
+    "AGNC":   ["AGNC Investment"],
+    "STWD":   ["Starwood Property Trust"],
+    "OTF":    ["Blue Owl Technology"],
+    "PSEC":   ["Prospect Capital"],
+    "PPERY":  ["Bank Muscat"],
+    "BKRP":   ["Bank Rakyat Indonesia"],
+    "MRP":    ["MilliporeSigma", "Millennium"],
+    "PIM":    ["Pimco Corporate"],
+    "BXSL":    ["Blackstone Secured"],
+    "BKRKY":  ["Bank Rakyat"],
+    "BHFAP":  ["Brighthouse Financial"],
+    "OBDC":   ["Blue Owl Capital"],
+    "PHMF":   ["Harjayan"],
+    "RITM":   ["Rithm Capital"],
+    "HTGC":   ["Hercules Capital"],
+    "CRARY":  ["Credit Agricole"],
+    "TRMD":   ["TORM PLC"],
+    "JPC":    ["Nuveen Preferred"],
     "AVGO":   ["Broadcom"],
     "ORCL":   ["Oracle"],
     "ADBE":   ["Adobe"],
@@ -61,7 +86,6 @@ TICKER_NAMES: dict[str, list[str]] = {
     "MDB":    ["MongoDB"],
     "PLTR":   ["Palantir"],
     "NFLX":   ["Netflix"],
-    "SQ":     ["Block", "Square"],
     "COIN":   ["Coinbase"],
     "HOOD":   ["Robinhood"],
     "SOFI":   ["SoFi"],
@@ -148,7 +172,6 @@ TICKER_NAMES: dict[str, list[str]] = {
     "FDX":    ["FedEx"],
     "MMM":    ["3M"],
     "VZ":     ["Verizon"],
-    "DIS":    ["Disney"],
     # ── USA REITs ───────────────────────────────────────────────────────────
     "AMT":    ["American Tower"],
     "PLD":    ["Prologis"],
@@ -200,7 +223,6 @@ TICKER_NAMES: dict[str, list[str]] = {
     "BVB.DE":  ["Borussia Dortmund", "BVB"],
     "HLAG.DE": ["Hapag-Lloyd"],
     "HOT.DE":  ["Hochtief"],
-    "IFX.DE":  ["Infineon"],
     "LEG.DE":  ["LEG Immobilien"],
     "NDX1.DE": ["Nordex"],
     "PBB.DE":  ["Pfandbriefbank", "Deutsche Pfandbriefbank"],
@@ -214,7 +236,6 @@ TICKER_NAMES: dict[str, list[str]] = {
     "GFT.DE":  ["GFT Technologies"],
     # ── FRANKREICH ──────────────────────────────────────────────────────────
     "AI.PA":   ["Air Liquide"],
-    "AIR.PA":  ["Airbus FR"],
     "CS.PA":   ["AXA"],
     "BN.PA":   ["Danone"],
     "DSY.PA":  ["Dassault Systemes"],
@@ -239,17 +260,13 @@ TICKER_NAMES: dict[str, list[str]] = {
     "STLA.PA": ["Stellantis", "Fiat", "Peugeot"],
     "RNO.PA":  ["Renault"],
     "CA.PA":   ["Carrefour"],
-    # ── SPANIEN ─────────────────────────────────────────────────────────────
+    # ── SPANIEN & ITALIEN ───────────────────────────────────────────────────
     "SAN.MC":  ["Santander"],
     "BBVA.MC": ["BBVA"],
     "IBE.MC":  ["Iberdrola"],
     "ITX.MC":  ["Inditex", "Zara"],
     "TEF.MC":  ["Telefonica"],
     "REP.MC":  ["Repsol"],
-    "CABK.MC": ["CaixaBank"],
-    "CLNX.MC": ["Cellnex"],
-    "AMS.MC":  ["Amadeus"],
-    # ── ITALIEN ─────────────────────────────────────────────────────────────
     "ENEL.MI": ["Enel"],
     "ENI.MI":  ["Eni"],
     "RACE.MI": ["Ferrari"],
@@ -257,167 +274,47 @@ TICKER_NAMES: dict[str, list[str]] = {
     "ISP.MI":  ["Intesa Sanpaolo", "Intesa"],
     "G.MI":    ["Generali"],
     "STM.MI":  ["STMicroelectronics", "ST Micro"],
-    "MONC.MI": ["Moncler"],
-    "LDO.MI":  ["Leonardo"],
-    # ── NIEDERLANDE ─────────────────────────────────────────────────────────
+    # ── SCHWEIZ & NIEDERLANDE & UK ──────────────────────────────────────────
     "ASML.AS": ["ASML"],
     "ADYEN.AS":["Adyen"],
-    "AD.AS":   ["Ahold Delhaize", "Albert Heijn"],
-    "INGA.AS": ["ING"],
-    "HEIA.AS": ["Heineken"],
-    "UMG.AS":  ["Universal Music"],
-    "PHIA.AS": ["Philips"],
-    "AKZA.AS": ["Akzo Nobel"],
-    # ── SCHWEIZ ─────────────────────────────────────────────────────────────
     "NESN.SW": ["Nestle", "Nestlé"],
     "ROG.SW":  ["Roche"],
     "NOVN.SW": ["Novartis"],
     "ABBN.SW": ["ABB"],
-    "CFR.SW":  ["Richemont", "Cartier"],
-    "SIKA.SW": ["Sika"],
     "UBSG.SW": ["UBS"],
     "ZURN.SW": ["Zurich Insurance", "Zurich"],
-    "HOLN.SW": ["Holcim"],
-    "LINDT.SW":["Lindt"],
-    # ── UK ──────────────────────────────────────────────────────────────────
-    "AZN.L":   ["AstraZeneca", "Astra Zeneca"],
+    "AZN.L":   ["AstraZeneca"],
     "HSBA.L":  ["HSBC"],
     "ULVR.L":  ["Unilever"],
-    "GSK.L":   ["GSK", "GlaxoSmithKline", "Glaxo"],
-    "RIO.L":   ["Rio Tinto"],
+    "GSK.L":   ["GSK", "GlaxoSmithKline"],
     "BP.L":    ["BP"],
     "SHEL.L":  ["Shell"],
-    "BATS.L":  ["British American Tobacco", "BAT"],
-    "DGE.L":   ["Diageo"],
-    "LLOY.L":  ["Lloyds"],
-    "BARC.L":  ["Barclays"],
-    "NWG.L":   ["NatWest"],
-    "RR.L":    ["Rolls-Royce", "Rolls Royce"],
-    "BA.L":    ["BAE Systems"],
-    "GLEN.L":  ["Glencore"],
-    "AAL.L":   ["Anglo American"],
-    "NEXT.L":  ["Next"],
-    "MKS.L":   ["Marks Spencer", "M&S"],
-    "TSCO.L":  ["Tesco"],
-    # ── SKANDINAVIEN ────────────────────────────────────────────────────────
-    "NOVO-B.CO":   ["Novo Nordisk", "Ozempic", "Wegovy"],
-    "CARL-B.CO":   ["Carlsberg"],
-    "MAERSK-B.CO": ["Maersk"],
-    "ORSTED.CO":   ["Orsted"],
-    "EQNR":        ["Equinor", "Statoil"],
-    "VOLV-B.ST":   ["Volvo"],
-    "ERIC-B.ST":   ["Ericsson"],
-    "ASSA-B.ST":   ["Assa Abloy"],
-    "KNEBV.HE":    ["Kone"],
-    "NESTE.HE":    ["Neste"],
-    # ── CHINA / HONG KONG ───────────────────────────────────────────────────
+    # ── ASIEN & CHINA ───────────────────────────────────────────────────────
     "BABA":    ["Alibaba"],
     "TCEHY":   ["Tencent OTC"],
     "JD":      ["JD.com"],
     "BIDU":    ["Baidu"],
     "PDD":     ["Pinduoduo", "Temu"],
     "NIO":     ["NIO"],
-    "XPEV":    ["Xpeng"],
-    "LI":      ["Li Auto"],
     "0700.HK": ["Tencent", "Tencent HK"],
     "9988.HK": ["Alibaba HK"],
-    "9618.HK": ["JD.com HK"],
-    "9888.HK": ["Baidu HK"],
-    "0939.HK": ["CCB", "China Construction Bank", "China Bau Bank"],
-    "1398.HK": ["ICBC", "Industrial Commercial Bank"],
-    "3988.HK": ["Bank of China"],
-    "0941.HK": ["China Mobile"],
-    "0728.HK": ["China Telecom"],
-    "0762.HK": ["China Unicom"],
-    "2628.HK": ["China Life Insurance"],
-    "0386.HK": ["Sinopec"],
-    "0857.HK": ["PetroChina"],
-    "0992.HK": ["Lenovo"],
-    "0175.HK": ["Geely"],
-    "9868.HK": ["Xpeng HK"],
-    "2015.HK": ["Li Auto HK"],
-    "2318.HK": ["Ping An Insurance"],
-    # ── SÜDKOREA ────────────────────────────────────────────────────────────
-    "005930.KS": ["Samsung", "Samsung Electronics"],
-    "000660.KS": ["SK Hynix", "Hynix"],
-    "005380.KS": ["Hyundai Motor", "Hyundai"],
-    "000270.KS": ["Kia", "Kia Motors"],
-    "005490.KS": ["POSCO"],
-    "051910.KS": ["LG Chem"],
-    "006400.KS": ["Samsung SDI"],
-    "035420.KS": ["Naver"],
-    "035720.KS": ["Kakao"],
-    "066570.KS": ["LG Electronics"],
-    "003550.KS": ["LG Corp"],
-    "017670.KS": ["SK Telecom"],
-    "030200.KS": ["KT Corporation"],
-    "015760.KS": ["KEPCO", "Korea Electric Power"],
-    "247540.KS": ["Ecopro BM"],
-    "086790.KS": ["Hana Financial", "Hana Bank"],
-    "105560.KS": ["KB Financial", "KB Kookmin"],
-    "055550.KS": ["Shinhan Financial", "Shinhan Bank"],
-    "011070.KS": ["LG Innotek"],
-    # ── JAPAN ───────────────────────────────────────────────────────────────
+    "2318.HK": ["Ping An Insurance", "Ping An"],
     "7203.T":  ["Toyota"],
     "6758.T":  ["Sony"],
     "9984.T":  ["SoftBank"],
-    "6861.T":  ["Keyence"],
-    "8306.T":  ["Mitsubishi UFJ", "MUFG"],
-    "9432.T":  ["NTT"],
-    "6367.T":  ["Daikin"],
-    "6501.T":  ["Hitachi"],
-    "9433.T":  ["KDDI"],
-    "8035.T":  ["Tokyo Electron"],
-    "7751.T":  ["Canon"],
-    "7267.T":  ["Honda"],
-    "6702.T":  ["Fujitsu"],
-    "4063.T":  ["Shin-Etsu Chemical"],
-    "9983.T":  ["Fast Retailing", "Uniqlo"],
-    "2914.T":  ["Japan Tobacco"],
-    "7974.T":  ["Nintendo"],
-    "4661.T":  ["Oriental Land", "Tokyo Disney"],
-    "6954.T":  ["Fanuc"],
-    "5108.T":  ["Bridgestone"],
-    "3382.T":  ["Seven Eleven"],
-    "2502.T":  ["Asahi"],
-    "4901.T":  ["Fujifilm"],
-    # ── EMERGING MARKETS ────────────────────────────────────────────────────
-    "INFY":   ["Infosys"],
-    "HDB":    ["HDFC Bank"],
-    "IBN":    ["ICICI Bank"],
-    "TTM":    ["Tata Motors"],
-    "VALE":   ["Vale"],
-    "ITUB":   ["Itau Unibanco"],
-    "ABEV":   ["Ambev"],
-    "KEP":    ["KEPCO ADR"],
-    "KT":     ["KT Corp ADR"],
-    "JAR.L": ["Jardine Matheson"],
-    "J36.SI": ["Jardine Matheson Limited Holding London"],
+    "005930.KS": ["Samsung", "Samsung Electronics"],
 }
 
 
 def _tokenize(s: str) -> list[str]:
     """Splittet einen String in Tokens und normalisiert."""
     n = _norm(s)
-    # Split auf Leerzeichen, Bindestrich, Punkt
     tokens = re.split(r'[\s\-\.]+', n)
     return [t for t in tokens if t]
 
 
 def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> list[str]:
-    """
-    Sucht Ticker nach Name oder Symbol.
-    Gibt sortierte Liste von Labels zurück: "ALV.DE — Allianz"
-    
-    Unterstützt:
-    - Exakter Ticker: "ALV.DE"
-    - Ticker-Präfix: "ALV"
-    - Name exakt: "Allianz"
-    - Token-Start: "ali" → matcht "Allianz" (Token beginnt mit "ali")
-    - Token-Enthalt: "ianz" → matcht "Allianz"
-    - Multi-Token: "deutsche bank" → beide Tokens müssen matchen
-    - Sonderzeichen: "münch" → matcht "Muenchen" / "München"
-    """
+    """Sucht Ticker nach Name oder Symbol."""
     q = query.strip()
     if not q:
         return []
@@ -428,7 +325,7 @@ def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> 
     if not q_tokens:
         return []
 
-    results: list[tuple[int, str, str]] = []  # (priority, ticker, label)
+    results: list[tuple[int, str, str]] = []
 
     for ticker in all_tickers:
         t_lower  = ticker.lower()
@@ -437,37 +334,27 @@ def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> 
         best_prio = None
         best_name = names[0] if names else ticker
 
-        # ── Ticker-Matching ─────────────────────────────────────
-        # Prio 0: exakter Ticker-Match
         if t_lower == q.lower():
             best_prio = 0
-        # Prio 1: Ticker beginnt mit Query
         elif t_norm.startswith(q_norm) or t_lower.startswith(q.lower()):
             best_prio = 1
-        # Prio 6: Query irgendwo im Ticker
         elif q_norm in t_norm:
             best_prio = 6
 
-        # ── Name-Matching ────────────────────────────────────────
         for name in names:
             name_norm   = _norm(name)
             name_tokens = _tokenize(name)
 
-            # Prio 2: exakter Name-Match
             if name_norm == q_norm:
                 if best_prio is None or best_prio > 2:
                     best_prio = 2; best_name = name
                 break
 
-            # Prio 3: Name beginnt mit Query
             if name_norm.startswith(q_norm):
                 if best_prio is None or best_prio > 3:
                     best_prio = 3; best_name = name
                 continue
 
-            # Prio 4: Alle Query-Tokens matchen Token-Anfänge im Namen
-            # "ali" matches "Allianz" weil token "allianz" starts with "ali"
-            # "deut ban" matches "Deutsche Bank"
             all_match = True
             for qt in q_tokens:
                 tok_match = any(nt.startswith(qt) for nt in name_tokens)
@@ -479,7 +366,6 @@ def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> 
                     best_prio = 4; best_name = name
                 continue
 
-            # Prio 5: Query-String irgendwo im Namen enthalten
             if q_norm in name_norm:
                 if best_prio is None or best_prio > 5:
                     best_prio = 5; best_name = name
