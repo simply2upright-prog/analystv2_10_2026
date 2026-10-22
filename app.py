@@ -267,4 +267,4 @@ with tab1:
             macd_turn = r.get('MACD_Turn')
             sig  = classify_signal(sv, sf, ss, cv, macd_turn)
             sc   = int(r.get('Score', 0))
-            sc_c = {4:"#0d7a2e",3:"#1a9e3f",2:"#f39c12",1:"#7f8c8d"}.
+            sc_c = {4:"#0d7a2e",3:"#1a9e3f",2:"#f39c12",1:"#7f8c8d"}
