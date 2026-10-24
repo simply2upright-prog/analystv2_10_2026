@@ -7,7 +7,8 @@ from scipy.signal import argrelextrema
 from database import get_currency
 from engine import (classify_signal, clean_price_df, compute_macd, detect_macd_turn, format_dividend_yield,
                      find_signal_history, find_entry_signals, compute_hit_rate, add_strategy_indicators,
-                     resolve_currency, HISTORY_PERIOD)
+                     resolve_currency, HISTORY_PERIOD, download_price_frames)
+from ticker_search import get_display_name as _search_display_name
 
 
 def _fetch_history(ticker: str):
@@ -19,11 +20,49 @@ def _fetch_history(ticker: str):
 
 
 def get_detail_analysis(ticker: str) -> dict | None:
+    """Einzel-Analyse (Tab 'Detail-Analyse'/'Einzelne Aktie'): mit vollem .info-Abruf (Sektor, Div, KGV, Name)."""
     try:
         df, stock = _fetch_history(ticker)
         if df.empty or len(df) < 50:
             return None
+        inf = {}
+        try: inf = stock.info or {}
+        except Exception: pass
+        return _analyze_detail_frame(ticker, df, inf)
+    except Exception as e:
+        print(f"[detail_engine] {ticker}: {e}")
+        return None
 
+
+def scan_detail_batch(tickers: list[str], progress_cb=None) -> dict:
+    """
+    Formations-Scan über VIELE Ticker (Tab 'Markt scannen'): lädt alle Kurse in Batches
+    (engine.download_price_frames) statt einem yf.Ticker(t).history()-Aufruf pro Ticker - das war
+    der Grund, warum der Scan bei der gesamten Datenbank (800+ Ticker) in Streamlit hing. Auf den
+    langsamen .info-Abruf wird hier bewusst verzichtet (Name kommt aus der lokalen ticker_search-
+    Datenbank) - die paar Datenpunkte, die wirklich .info brauchen (Sektor, Div, KGV), werden in
+    der Tabelle nicht angezeigt und bei Bedarf über 'Einzelne Aktie' nachgeladen.
+    Gibt {ticker: result_dict} zurück (nur Ticker mit genug Historie).
+    """
+    frames, _failed = download_price_frames(tickers, progress_cb=progress_cb, phase="scan")
+    out = {}
+    for t, raw in frames.items():
+        try:
+            df = clean_price_df(raw)
+            if df.empty or len(df) < 50:
+                continue
+            res = _analyze_detail_frame(t, df, inf={})
+            if res:
+                out[t] = res
+        except Exception as e:
+            print(f"[detail_engine] {t}: {e}")
+    return out
+
+
+def _analyze_detail_frame(ticker: str, df: pd.DataFrame, inf: dict | None = None) -> dict | None:
+    """Reine Berechnung auf einem bereits geladenen, bereinigten OHLCV-DataFrame (kein Netzwerk)."""
+    inf = inf or {}
+    try:
         has_200 = len(df) >= 200
         has_70  = len(df) >= 70
 
@@ -77,20 +116,26 @@ def get_detail_analysis(ticker: str) -> dict | None:
         if pd.notna(sma200_val):
             trend = "up" if price > sma200_val else "down"
 
-        inf = {}
-        try: inf = stock.info or {}
-        except Exception: pass
-
         currency, _div = resolve_currency(ticker, inf.get('currency'))
         if _div != 1:   # Chart, Kurse und Kursziele bleiben in Pence/Cent -> ehrlich so beschriften
             currency = {"£": "GBp", "ZAR": "ZAc", "ILS": "ILA"}.get(currency, currency + " (Sub)")
         div_str  = format_dividend_yield(inf, price, subunit=(_div != 1))
         df_1y    = df.tail(252)
 
+        # Name: aus .info, sonst aus der lokalen ticker_search-Datenbank (kein Netzwerk nötig -
+        # wichtig für scan_detail_batch(), das .info bewusst auslässt).
+        name = inf.get('shortName') or _search_display_name(ticker).split(" — ", 1)[-1].split(" · ")[0] or ticker
+
         return {
             "Ticker":         ticker,
-            "Name":           inf.get('shortName', ticker)[:25],
+            "Name":           name[:25],
             "Währung":        currency,
+            "Sektor":         inf.get('sector'),
+            "Industrie":      inf.get('industry'),
+            "Beschreibung":   inf.get('longBusinessSummary'),
+            "Website":        inf.get('website'),
+            "Land":           inf.get('country'),
+            "Mitarbeiter":    inf.get('fullTimeEmployees'),
             "Signal":         f"{sig['emoji']} {sig['label']}",
             "Sig_Data":       sig,
             "Preis":          round(price, 2),

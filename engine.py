@@ -19,11 +19,11 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from database import get_currency
+from database import get_currency, get_focus
 
 log = logging.getLogger(__name__)
 
-APP_URL = "https://analystv2102026.streamlit.app/"
+APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
 
 # ── Konfiguration ────────────────────────────────────────────────────────────
 HISTORY_PERIOD        = "3y"   # 70/200-Indikatoren brauchen Einlaufzeit; 2y waren zu knapp
@@ -492,15 +492,27 @@ def compute_hit_rate(entry_signals: list[dict], df: pd.DataFrame, forward_days: 
 
 
 def analyze_trend_hit_rate(tickers: list[str], progress_cb=None, forward_days: int = FORWARD_DAYS) -> dict:
-    """Trend-Vergleich (App Tab 4): Trefferquote der Kauf-Einstiege über/unter SMA200 zum Einstiegszeitpunkt."""
+    """
+    Trend-Vergleich (App Tab 3): Trefferquote der Kauf-Einstiege über/unter SMA200 zum Einstiegszeitpunkt.
+    Lädt alle Kurse in Batches (download_price_frames) statt pro Ticker einzeln - sonst hängt die
+    Auswertung bei "Alle Gruppen" (gesamte Datenbank) in Streamlit.
+    """
     cohorts = {k: {"hits": 0, "misses": 0, "gains": [], "losses": []} for k in ("up", "down", "unknown")}
-    n_tickers_used, n = 0, len(tickers)
-    for i, ticker in enumerate(tickers):
+    n_tickers_used = 0
+
+    def _dl_progress(done, total, phase):
         if progress_cb:
-            try: progress_cb(i, n, ticker)
+            try: progress_cb(done, total, "Kursdaten laden …")
+            except Exception: pass
+
+    frames, _failed = download_price_frames(tickers, progress_cb=_dl_progress)
+
+    for i, (ticker, raw_df) in enumerate(frames.items()):
+        if progress_cb:
+            try: progress_cb(i, len(frames), ticker)
             except Exception: pass
         try:
-            df = clean_price_df(yf.Ticker(ticker).history(period=HISTORY_PERIOD, auto_adjust=False))
+            df = clean_price_df(raw_df)
             if df.empty or len(df) < 60:
                 continue
             df = add_strategy_indicators(df)
@@ -535,9 +547,9 @@ def analyze_trend_hit_rate(tickers: list[str], progress_cb=None, forward_days: i
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Handelsschluss in UTC (konservativ = Winterzeit; im Sommer schließen die Börsen 1 h früher).
-_CLOSE_UTC = {".T": (6, 45), ".KS": (6, 45), ".HK": (8, 30), ".SR": (12, 15), ".IS": (15, 15),
+_CLOSE_UTC = {".AX": (6, 15), ".T": (6, 45), ".KS": (6, 45), ".HK": (8, 30), ".SR": (12, 15), ".IS": (15, 15),
               ".JO": (15, 15), ".SA": (21, 10), ".MX": (21, 15)}
-_EU_SUFFIXES = (".DE", ".PA", ".MC", ".MI", ".AS", ".VI", ".LS", ".HE", ".L", ".SW", ".OL", ".ST", ".CO")
+_EU_SUFFIXES = (".DE", ".PA", ".MC", ".MI", ".AS", ".VI", ".LS", ".HE", ".L", ".SW", ".OL", ".ST", ".CO", ".BR")
 
 
 def _close_time_utc(ticker: str) -> tuple[int, int]:
@@ -692,21 +704,21 @@ def _split_download(raw: pd.DataFrame, tickers: list[str]) -> dict:
     return out
 
 
-def scan_tickers(tickers: list[str], now_utc: datetime | None = None, batch_size: int = BATCH_SIZE,
-                 compute_history: bool = True, progress_cb=None):
+def download_price_frames(tickers: list[str], batch_size: int = BATCH_SIZE, period: str = HISTORY_PERIOD,
+                          progress_cb=None, phase: str = "download") -> tuple[dict, dict]:
     """
-    Batch-Scan: Kurse in Paketen laden (schnell, wenig Rate-Limit), Indikatoren lokal rechnen,
-    .info nur für Ticker mit Signal. Gibt (results, failed, stale, meta) zurück:
-      failed = {ticker: Grund}, stale = Ticker ohne aktuelle Kerze (Feiertag/Handelsaussetzung).
+    Lädt Kurse für VIELE Ticker in Paketen (yf.download, wenig Rate-Limit) statt mit einem
+    yf.Ticker(t).history()-Aufruf pro Ticker - das war der Grund, warum Scanner/Trend-Vergleich/
+    Formations-Scan bei mehreren hundert Tickern in Streamlit "hängen" (eine Session blockiert,
+    bis alle Einzelabrufe sequentiell durch sind). Gibt (frames, failed) zurück:
+      frames = {ticker: DataFrame}, failed = {ticker: Grund}.
     """
-    now_utc = now_utc or datetime.now(timezone.utc)
     frames, missing = {}, []
-
     for k in range(0, len(tickers), batch_size):
         chunk = tickers[k:k + batch_size]
         raw = None
         try:
-            raw = yf.download(chunk, period=HISTORY_PERIOD, interval="1d", group_by="ticker",
+            raw = yf.download(chunk, period=period, interval="1d", group_by="ticker",
                               auto_adjust=False, threads=True, progress=False, timeout=30)
         except Exception as e:
             log.warning("Batch %d-%d fehlgeschlagen: %s", k, k + len(chunk), e)
@@ -718,7 +730,7 @@ def scan_tickers(tickers: list[str], now_utc: datetime | None = None, batch_size
             else:
                 missing.append(t)
         if progress_cb:
-            try: progress_cb(min(k + batch_size, len(tickers)), len(tickers), "download")
+            try: progress_cb(min(k + batch_size, len(tickers)), len(tickers), phase)
             except Exception: pass
         time.sleep(0.5)
 
@@ -726,7 +738,7 @@ def scan_tickers(tickers: list[str], now_utc: datetime | None = None, batch_size
     for t in missing:                         # Einzel-Nachversuch (Batch-Lücken sind häufig Rate-Limit)
         for attempt in range(2):
             try:
-                d = yf.Ticker(t).history(period=HISTORY_PERIOD, auto_adjust=False)
+                d = yf.Ticker(t).history(period=period, auto_adjust=False)
                 if d is not None and not d.empty and d["Close"].notna().sum() >= 50:
                     frames[t] = d
                     break
@@ -735,6 +747,18 @@ def scan_tickers(tickers: list[str], now_utc: datetime | None = None, batch_size
             time.sleep(1.0)
         else:
             failed[t] = "keine/zu wenig Kursdaten"
+    return frames, failed
+
+
+def scan_tickers(tickers: list[str], now_utc: datetime | None = None, batch_size: int = BATCH_SIZE,
+                 compute_history: bool = True, progress_cb=None):
+    """
+    Batch-Scan: Kurse in Paketen laden (schnell, wenig Rate-Limit), Indikatoren lokal rechnen,
+    .info nur für Ticker mit Signal. Gibt (results, failed, stale, meta) zurück:
+      failed = {ticker: Grund}, stale = Ticker ohne aktuelle Kerze (Feiertag/Handelsaussetzung).
+    """
+    now_utc = now_utc or datetime.now(timezone.utc)
+    frames, failed = download_price_frames(tickers, batch_size, HISTORY_PERIOD, progress_cb, "download")
 
     analysed, last_dates = [], {}
     for t, d in frames.items():
@@ -952,6 +976,8 @@ def _card(r: dict, sig: dict) -> str:
     if rs is not None:
         rs_html = f' · rel. Stärke {"↑" if rs >= 0 else "↓"} {rs:+.1f}% vs. Gruppe'
 
+    focus = get_focus(str(r.get("Ticker", "")))
+    focus_html = (f' <span style="font-size:11px;color:#8a94a6;">· Fokus: {html.escape(focus)}</span>' if focus else "")
     htxt, hcol = _hist_text(r, side)
     sr, sf, ss, cv = _num(r.get("StochRSI")), _num(r.get("Stoch_Fast")), _num(r.get("Stoch_Slow")), _num(r.get("CCI"))
     fmt = lambda v, f: (f.format(v) if v is not None else "–")
@@ -966,7 +992,7 @@ def _card(r: dict, sig: dict) -> str:
         <span style="font-size:12px;color:#8a94a6;margin-left:6px;">{name}</span></td>
     <td align="right"><span style="font-size:16px;font-weight:800;color:#0f1b2d;">{html.escape(str(r.get('Preis', '')))}</span></td>
   </tr><tr>
-    <td><span style="font-size:11px;font-weight:700;color:{color};">{sig['emoji']} {sig['label']} · {sc}/4</span></td>
+    <td><span style="font-size:11px;font-weight:700;color:{color};">{sig['emoji']} {sig['label']} · {sc}/4</span>{focus_html}</td>
     <td align="right"><span style="font-size:11px;color:#8a94a6;">Div {html.escape(str(r.get('Div', '–')))} · KGV {html.escape(str(r.get('KGV', 'N/A')))}</span></td>
   </tr></table>
   <div style="font-size:12px;color:#4a5568;margin-top:6px;border-top:1px solid #eef1f6;padding-top:6px;">{ind}</div>

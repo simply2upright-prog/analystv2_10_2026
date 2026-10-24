@@ -4,17 +4,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import base64
+from urllib.parse import quote_plus
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from database import get_all_tickers, get_tickers_by_group, get_all_groups, get_currency, get_ticker_count, get_group_for_ticker
-from engine import (get_analysis, send_mail_report, classify_signal,
+from database import get_all_tickers, get_tickers_by_group, get_all_groups, get_currency, get_ticker_count, get_group_for_ticker, get_groups_for_ticker, get_group_label, get_focus
+from engine import (get_analysis, scan_tickers, send_mail_report, classify_signal,
                     get_futures_analysis, FUTURES_TICKERS,
                     get_all_futures_groups, get_futures_by_group,
                     analyze_trend_hit_rate)
-from detail_engine import get_detail_analysis, compute_hit_rate
+from detail_engine import get_detail_analysis, scan_detail_batch, compute_hit_rate
 from engine import MIN_HISTORY_N, FORWARD_DAYS
-from ticker_search import search_ticker, label_to_ticker, get_display_name
+from ticker_search import search_ticker, label_to_ticker, get_display_name, get_exchange, get_sector
+from automation_script import add_relative_strength
 
 APP_URL = "https://stockupdate-65qjxum6gq2gpjpr5exqfd.streamlit.app"
 
@@ -218,25 +220,33 @@ with tab1:
 
     if st.button("🔥 SCAN STARTEN"):
         tickers = get_all_tickers() if sel_grp == "🌍 Alle Gruppen" else get_tickers_by_group(sel_grp)
-        raw, prog, stat = [], st.progress(0), st.empty()
-        for i, t in enumerate(tickers):
-            stat.text(f"Scanne {i+1}/{len(tickers)}: {t}")
-            res = get_analysis(t)
-            if res: raw.append(res)
-            prog.progress((i+1)/len(tickers))
-        df = pd.DataFrame(raw)
+        prog, stat = st.progress(0), st.empty()
+
+        def _scan_progress(done, total, phase):
+            if phase == "download":
+                stat.text(f"Lade Kursdaten (Batch): {done}/{total} Ticker")
+                prog.progress(min(done / max(total, 1), 1.0) * 0.9)
+            elif phase == "info":
+                stat.text(f"Lade Zusatzinfos (Name/Div/KGV) für Signal-Ticker: {done}/{total}")
+                prog.progress(0.9 + min(done / max(total, 1), 1.0) * 0.1)
+
+        # Batch-Scan statt einzelner Abrufe pro Ticker (sonst hängt Streamlit bei großen Listen) —
+        # siehe engine.scan_tickers(), bereits von automation_script.py genutzt.
+        results, failed, stale, meta = scan_tickers(tickers, compute_history=True, progress_cb=_scan_progress)
+        prog.progress(1.0)
+        if results:
+            # Relative Stärke: eigene 20-Tage-Performance vs. Durchschnitt ALLER Peer-Gruppen des Tickers
+            # (gleiche Logik wie in automation_script.py, nicht nur die erste Gruppe im Dict).
+            results = add_relative_strength(results)
+        df = pd.DataFrame(results)
         if not df.empty:
-            # Relative Stärke: eigene 20-Tage-Performance vs. Durchschnitt der Peer-Gruppe in diesem Scan
-            df["_group"] = df["Ticker"].apply(get_group_for_ticker)
-            grp_avg = df.dropna(subset=["Ret_20d"]).groupby("_group")["Ret_20d"].mean()
-            df["RelStrength"] = df.apply(
-                lambda r: round(r["Ret_20d"] - grp_avg.get(r["_group"], np.nan), 2)
-                if pd.notna(r.get("Ret_20d")) and r["_group"] in grp_avg.index else None, axis=1)
-            df = df.drop(columns=["_group"])
             df = df[df["Score"] >= min_score].sort_values(
                 ["Score","HitRate"], ascending=[False,False], na_position="last").reset_index(drop=True)
             st.session_state.results = df
-            stat.success(f"✅ {len(df)} Signale in {len(tickers)} Titeln.")
+            msg = f"✅ {len(df)} Signale in {len(tickers)} Titeln."
+            if failed:
+                msg += f" ({len(failed)} ohne Daten, {len(stale)} veraltet)"
+            stat.success(msg)
         else:
             stat.warning("Keine Signale.")
 
@@ -372,6 +382,37 @@ with tab2:
             c4.metric("Dividende", data["Div"])
             c5.metric("KGV", str(data["KGV"]))
             c6.metric("RVOL", f"{_fnum(data['RVOL'])}x")
+
+            # ── Zuordnung, Fokus und Unternehmensprofil ──────────────
+            _grp_labels = [get_group_label(g) for g in get_groups_for_ticker(sel_t)]
+            _focus      = get_focus(sel_t)
+            _sector     = " · ".join(x for x in (data.get("Sektor"), data.get("Industrie")) if x) or get_sector(sel_t)
+            _meta_line  = []
+            if _focus:      _meta_line.append(f"🎯 **Fokus:** {_focus}")
+            if _sector:     _meta_line.append(f"🏭 {_sector}")
+            if _grp_labels: _meta_line.append("📂 " + " · ".join(_grp_labels[:6]) + (" …" if len(_grp_labels) > 6 else ""))
+            if _meta_line:
+                st.caption("  \n".join(_meta_line))
+
+            with st.expander("🧭 Unternehmen verstehen — Profil & KI-Erläuterung", expanded=False):
+                _name = data.get("Name") or sel_t
+                if data.get("Beschreibung"):
+                    st.markdown(data["Beschreibung"])
+                    _facts = [f"**Land:** {data['Land']}" if data.get("Land") else "",
+                              f"**Mitarbeiter:** {data['Mitarbeiter']:,}".replace(",", ".") if isinstance(data.get("Mitarbeiter"), int) else "",
+                              f"[Webseite]({data['Website']})" if data.get("Website") else ""]
+                    st.caption("  ·  ".join(x for x in _facts if x) + "  —  Quelle: Yahoo Finance (englisch)")
+                else:
+                    st.info("Yahoo liefert für diesen Ticker keine Unternehmensbeschreibung.")
+                _prompt = (f"Erkläre mir das Unternehmen {_name} (Ticker {sel_t}, Börse {get_exchange(sel_t)}): "
+                           f"Geschäftsmodell, wichtigste Umsatzquellen, aktuelle Nachrichten der letzten Wochen, "
+                           f"Bewertung sowie Chancen und Risiken. Wie ist der Stand der Aktie aktuell?")
+                _ai1, _ai2, _ai3 = st.columns(3)
+                _ai1.link_button("✨ Google KI (AI Mode)", f"https://www.google.com/search?udm=50&q={quote_plus(_prompt)}", use_container_width=True)
+                _ai2.link_button("📰 Google News", f"https://news.google.com/search?q={quote_plus(_name + ' Aktie')}&hl=de&gl=DE&ceid=DE:de", use_container_width=True)
+                _ai3.link_button("📈 Yahoo Finance", f"https://finance.yahoo.com/quote/{quote_plus(sel_t)}", use_container_width=True)
+                st.caption("Die KI-Antwort entsteht bei Google in einem neuen Tab (kostenlos, ohne API) und kann Fehler enthalten. "
+                           "Keine Anlageberatung.")
 
             # ── Indikator-Status: alle 4 Strategie-Kriterien kompakt in einer Zeile ──
             st.divider()
@@ -656,11 +697,20 @@ with tab3:
 
         if st.button("🚀 Formations-Scan starten"):
             tickers_t3 = get_all_tickers() if grp_t3=="🌍 Alle Gruppen" else get_tickers_by_group(grp_t3)
-            result_list, prog, txt = [], st.progress(0), st.empty()
+            prog, txt = st.progress(0), st.empty()
 
-            for i,t in enumerate(tickers_t3):
-                txt.text(f"Scanne: {t}")
-                res = get_detail_analysis(t)
+            def _form_progress(done, total, phase):
+                txt.text(f"Lade Kursdaten (Batch): {done}/{total} Ticker")
+                prog.progress(min(done / max(total, 1), 1.0))
+
+            # Batch-Download statt get_detail_analysis(t) pro Ticker (sonst hängt der Scan bei
+            # "Alle Gruppen" in Streamlit) — siehe detail_engine.scan_detail_batch().
+            with st.spinner("Kursdaten werden geladen und ausgewertet …"):
+                scanned = scan_detail_batch(tickers_t3, progress_cb=_form_progress)
+            result_list = []
+
+            for t in tickers_t3:
+                res = scanned.get(t)
                 if res:
                     patterns = res.get("Patterns", [])
                     targets  = res.get("Targets",  {})
@@ -722,8 +772,8 @@ with tab3:
                             "Z-Score":       res["Z_Score"],
                             "RVOL":          res["RVOL"],
                         })
-                prog.progress((i+1)/len(tickers_t3))
 
+            prog.progress(1.0)
             txt.empty()
             if result_list:
                 sort_col = "Boden %" if "Top" not in scan_mode else "Top %"
@@ -870,8 +920,8 @@ with tab3:
         "(Aufwärtstrend) oder unter (Abwärtstrend) der SMA200 lag."
     )
     grp_tv = st.selectbox("Gruppe:", ["🌍 Alle Gruppen"] + get_all_groups(), key="trend_vgl_grp")
-    st.caption("⚠️ Bei 'Alle Gruppen' (838 Ticker) dauert der Lauf mehrere Minuten, da für jeden Ticker "
-               "2 Jahre Historie geladen und ausgewertet werden.")
+    st.caption("Kursdaten werden in Paketen geladen (Batch) — bei 'Alle Gruppen' dauert das dennoch "
+               "etwas, da anschließend jeder Ticker einzeln ausgewertet wird.")
 
     if st.button("📊 Trend-Vergleich starten", key="trend_vgl_btn"):
         tickers_tv = get_all_tickers() if grp_tv == "🌍 Alle Gruppen" else get_tickers_by_group(grp_tv)

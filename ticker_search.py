@@ -1,983 +1,342 @@
-# ticker_search.py — Name-zu-Ticker Suche mit robustem Fuzzy-Matching (v2.2 Vollständig)
+# ticker_search.py — v2
+#   * Namen für alle Ticker (ticker_names.py) + optional automatisch erzeugte ticker_meta.json
+#   * Tippfehler-Toleranz ("appel", "nvidea"), Zusammenschreibung ("pingan" = "Ping An"), "&"-Namen ("at&t", "p&g")
+#   * ISIN- und WKN-Suche, Suche nach Thema/Sektor/Index ("rüstung", "uran", "defense", "dax")
+#   * ADR -> Heimatbörse ("nsrgy" findet Nestlé in Vevey), Börse + Währung im Label
+#   * Freie Yahoo-Eingabe als Fallback ("2318.HK", "RY.TO"), auch wenn der Ticker nicht in der Liste steht
+#
+# Öffentliche API unverändert: search_ticker(), label_to_ticker(), get_display_name(), TICKER_NAMES
 
-import unicodedata
+import difflib
+import json
+import os
 import re
+import unicodedata
+from functools import lru_cache
 
-# ── Normalisierung ──────────────────────────────────────────────────────────
-def _norm(s: str) -> str:
-    """Kleinbuchstaben, Umlaute normalisieren, Sonderzeichen entfernen."""
-    s = s.lower().strip()
-    replacements = {
-        'ä':'ae','ö':'oe','ü':'ue','ß':'ss',
-        'é':'e','è':'e','ê':'e','ë':'e',
-        'à':'a','â':'a','á':'a',
-        'ñ':'n','ç':'c','ô':'o','î':'i','û':'u',
-    }
-    for ch, rep in replacements.items():
-        s = s.replace(ch, rep)
-    s = re.sub(r"[&'\"]", '', s)
-    return s
+from database import TICKER_LISTS, ADR_ALIASES, get_currency, get_focus, get_group_label
+from ticker_names import TICKER_NAMES  # noqa: F401  (re-export, bisher hier definiert)
 
-# ── Ticker → [Name, Aliases] ────────────────────────────────────────────────
-TICKER_NAMES: dict[str, list[str]] = {
-    # ── USA & GLOBALE WERTE ────────────────────────────────────────────────
-    "AAPL":   ["Apple"],
-    "MSFT":   ["Microsoft"],
-    "NVDA":   ["Nvidia"],
-    "GOOGL":  ["Google", "Alphabet"],
-    "GOOG":   ["Google C"],
-    "META":   ["Meta", "Facebook"],
-    "AMZN":   ["Amazon"],
-    "TSLA":   ["Tesla"],
-    "PNGAY":  ["Ping An Insurance (Group) Company of China, Ltd.", "Ping An", "Ping An Insurance"],
-    "IEP":    ["Icahn Enterprises L.P.", "Icahn Enterprises"],
-    "RVT":    ["Royce Small-Cap Trust, Inc.", "Royce Small-Cap Trust"],
-    "UTF":    ["Cohen Steers Infrastructure"],
-    "ACP":    ["Aberdeen Income Credit"],
-    "PDX":    ["Pimco Dynamic Income"],
-    "DX":     ["Dynex Capital, Inc.", "Dynex Capital"],
-    "UNLRF":  ["PT Unilever Indonesia Tbk", "Unilever PLC"],
-    "FSK":    ["FS KKR Capital Corp.", "FS KKR Capital"],
-    "AGNC":   ["AGNC Investment Corp.", "AGNC Investment"],
-    "STWD":   ["Starwood Property Trust, Inc.", "Starwood Property Trust"],
-    "OTF":    ["Blue Owl Technology Finance Corp.", "Blue Owl Technology"],
-    "PSEC":   ["Prospect Capital"],
-    "PPERY":  ["Bank Muscat"],
-    "BKRP":   ["Bank Rakyat Indonesia"],
-    "MRP":    ["MRP Properties Trust", "MilliporeSigma", "Millennium"],
-    "PIM":    ["Pimco Corporate"],
-    "BXSL":   ["Blackstone Shareholder Corp.", "Blackstone Secured"],
-    "BKRKY":  ["Bank Rakyat"],
-    "BHFAP":  ["Brighthouse Financial, Inc.", "Brighthouse Financial"],
-    "OBDC":   ["Blue Owl Capital Corporation", "Blue Owl Capital"],
-    "PHMF":   ["Harjayan"],
-    "RITM":   ["Rithm Capital Corp.", "Rithm Capital"],
-    "HTGC":   ["Hercules Capital, Inc.", "Hercules Capital"],
-    "CRARY":  ["Crédit Agricole S.A.", "Credit Agricole"],
-    "TRMD":   ["TORM plc", "TORM PLC"],
-    "JPC":    ["Nuveen Preferred & Income Opportunities Fund", "Nuveen Preferred"],
-    "AVGO":   ["Broadcom"],
-    "ORCL":   ["Oracle"],
-    "ADBE":   ["Adobe"],
-    "CRM":    ["Salesforce"],
-    "AMD":    ["AMD", "Advanced Micro Devices"],
-    "QCOM":   ["Qualcomm"],
-    "TXN":    ["Texas Instruments Incorporated", "Texas Instruments"],
-    "INTU":   ["Intuit Inc.", "Intuit"],
-    "AMAT":   ["Applied Materials"],
-    "LRCX":   ["Lam Research"],
-    "KLAC":   ["KLA"],
-    "SNPS":   ["Synopsys"],
-    "CDNS":   ["Cadence"],
-    "MCHP":   ["Microchip Technology"],
-    "INTC":   ["Intel"],
-    "IBM":    ["IBM"],
-    "CSCO":   ["Cisco"],
-    "ACN":    ["Accenture plc", "Accenture"],
-    "FTNT":   ["Fortinet"],
-    "PANW":   ["Palo Alto Networks"],
-    "CRWD":   ["Crowdstrike"],
-    "ZS":     ["Zscaler"],
-    "DDOG":   ["Datadog"],
-    "MU":     ["Micron"],
-    "ANET":   ["Arista Networks"],
-    "NET":    ["Cloudflare"],
-    "SNOW":   ["Snowflake"],
-    "MDB":    ["MongoDB"],
-    "PLTR":   ["Palantir"],
-    "NFLX":   ["Netflix"],
-    "COIN":   ["Coinbase"],
-    "HOOD":   ["Robinhood"],
-    "SOFI":   ["SoFi"],
-    "RIVN":   ["Rivian"],
+SEP = " — "
 
-    # ── NACHTRAG: Lückenlose Ergänzung aus der Database (FAST, CTAS, URI, ZTS, XEL, ATO etc.) ──
-    "FAST":   ["Fastenal Company", "Fastenal"],
-    "CTAS":   ["Cintas Corporation", "Cintas"],
-    "URI":    ["United Rentals, Inc.", "United Rentals"],
-    "ZTS":    ["Zoetis Inc.", "Zoetis"],
-    "XEL":    ["Xcel Energy Inc.", "Xcel Energy"],
-    "ATO":    ["Atmos Energy Corporation", "Atmos Energy"],
-    "PRGO":   ["Perrigo Company plc"],
-    "VTRS":   ["Viatris Inc."],
-    "HSY":    ["The Hershey Company"],
-    "SJM":    ["The J. M. Smucker Company"],
-    "TSN":    ["Tyson Foods, Inc."],
-    "KMB":    ["Kimberly-Clark Corporation"],
-    "BBY":    ["Best Buy Co., Inc."],
-    "KHC":    ["The Kraft Heinz Company"],
-    "ED":     ["Consolidated Edison, Inc."],
-    "PCG-PA": ["Pacific Gas and Electric Company"],
-    "PEG":    ["Public Service Enterprise Group Incorporated"],
-
-    # ── USA FINANCIALS & PREFERRED STOCKS ──────────────────────────────────
-    "JPM":    ["JPMorgan Chase & Co.", "JPMorgan", "JP Morgan"],
-    "BAC":    ["Bank of America Corporation", "Bank of America"],
-    "WFC":    ["Wells Fargo & Company", "Wells Fargo"],
-    "C":      ["Citigroup Inc.", "Citigroup", "Citi"],
-    "GS":     ["The Goldman Sachs Group, Inc.", "Goldman Sachs"],
-    "MS":     ["Morgan Stanley"],
-    "BLK":    ["BlackRock, Inc.", "BlackRock"],
-    "SCHW":   ["The Charles Schwab Corporation", "Charles Schwab"],
-    "AXP":    ["American Express", "Amex"],
-    "V":      ["Visa"],
-    "MA":     ["Mastercard"],
-    "PYPL":   ["PayPal"],
-    "COF":    ["Capital One"],
-    "USB":    ["U.S. Bancorp"],
-    "PNC":    ["PNC Financial Services"],
-    "TFC":    ["Truist Financial"],
-    "BK":     ["Bank of New York Mellon"],
-    "STT":    ["State Street Corporation", "State Street"],
-    "FITB":    ["Fifth Third Bancorp"],
-    "KEY":    ["KeyCorp"],
-    "RF":     ["Regions Financial"],
-    "HBAN":   ["Huntington Bancshares"],
-    "CME":    ["CME Group"],
-    "SPGI":   ["S&P Global"],
-    "MCO":    ["Moodys"],
-    "USB-PP": ["U.S. Bancorp"],
-    "KEY-PJ": ["KeyCorp"],
-    "KEY-PI": ["KeyCorp"],
-    "WFC-PC": ["Wells Fargo & Company"],
-    "WFC-PY": ["Wells Fargo & Company"],
-    "BAC-PK": ["Bank of America Corporation"],
-    "BAC-PL": ["Bank of America Corporation"],
-    "BAC-PB": ["Bank of America Corporation"],
-    "MS-PE":  ["Morgan Stanley"],
-    "MS-PI":  ["Morgan Stanley"],
-    "MS-PO":  ["Morgan Stanley"],
-    "MS-PA":  ["Morgan Stanley"],
-    "STT-PG": ["State Street Corporation"],
-    "HIG-PG": ["The Hartford Financial Services Group, Inc."],
-
-    # ── USA HEALTHCARE ──────────────────────────────────────────────────────
-    "JNJ":    ["Johnson & Johnson", "Johnson Johnson", "J&J"],
-    "LLY":    ["Eli Lilly", "Lilly"],
-    "UNH":    ["UnitedHealth Group Incorporated", "UnitedHealth"],
-    "ABBV":   ["AbbVie Inc.", "AbbVie"],
-    "MRK":    ["Merck & Co., Inc.", "Merck US"],
-    "PFE":    ["Pfizer Inc.", "Pfizer"],
-    "TMO":    ["Thermo Fisher"],
-    "ABT":    ["Abbott Laboratories", "Abbott"],
-    "DHR":    ["Danaher"],
-    "BMY":    ["Bristol Myers"],
-    "AMGN":   ["Amgen Inc.", "Amgen"],
-    "GILD":   ["Gilead Sciences, Inc.", "Gilead"],
-    "VRTX":   ["Vertex"],
-    "REGN":   ["Regeneron"],
-    "ISRG":   ["Intuitive Surgical"],
-    "SYK":    ["Stryker Corporation", "Stryker"],
-    "BSX":    ["Boston Scientific"],
-    "MDT":    ["Medtronic"],
-    "NVO":    ["Novo Nordisk A/S", "Novo Nordisk US", "Ozempic"],
-
-    # ── USA CONSUMER ────────────────────────────────────────────────────────
-    "PG":     ["The Procter & Gamble Company", "Procter Gamble", "P&G"],
-    "KO":     ["The Coca-Cola Company", "Coca-Cola", "Coke"],
-    "PEP":    ["PepsiCo", "Pepsi"],
-    "WMT":    ["Walmart"],
-    "COST":   ["Costco"],
-    "HD":     ["The Home Depot, Inc.", "Home Depot"],
-    "MCD":    ["McDonald's Corporation", "McDonalds"],
-    "NKE":    ["Nike"],
-    "LOW":    ["Lowe's Companies, Inc.", "Lowes"],
-    "SBUX":   ["Starbucks Corporation", "Starbucks"],
-    "BKNG":   ["Booking"],
-    "MAR":    ["Marriott"],
-    "HLT":    ["Hilton"],
-    "PM":     ["Philip Morris"],
-    "MO":     ["Altria Group, Inc.", "Altria"],
-    "DIS":    ["Disney", "Walt Disney"],
-    "CL":     ["Colgate-Palmolive Company", "Colgate"],
-    "EL":     ["Estee Lauder"],
-
-    # ── USA ENERGY & MATERIALS ──────────────────────────────────────────────
-    "XOM":    ["Exxon", "ExxonMobil"],
-    "CVX":    ["Chevron Corporation", "Chevron"],
-    "COP":    ["ConocoPhillips", "Conoco"],
-    "SLB":    ["Schlumberger Limited", "Schlumberger"],
-    "HAL":    ["Halliburton"],
-    "OXY":    ["Occidental"],
-    "PBR":    ["Petróleo Brasileiro S.A. - Petrobras", "Petrobras"],
-    "PBR-A":  ["Petróleo Brasileiro S.A. - Petrobras"],
-    "FCX":    ["Freeport McMoRan"],
-    "NEM":    ["Newmont"],
-    "GOLD":   ["Barrick Gold"],
-    "LIN":    ["Linde plc", "Linde"],
-    "VLO":    ["Valero Energy Corporation"],
-    "EPD":    ["Enterprise Products Partners L.P."],
-    "MPLX":   ["MPLX LP"],
-    "PAGP":   ["Plains GP Holdings, L.P."],
-    "SUN":    ["Sunoco LP"],
-    "EQT":    ["EQT Corporation"],
-    "OKE":    ["ONEOCK, Inc."],
-
-    # ── USA INDUSTRIALS & UTILITIES ─────────────────────────────────────────
-    "GE":     ["General Electric"],
-    "HON":    ["Honeywell International Inc.", "Honeywell"],
-    "UPS":    ["UPS", "United Parcel Service"],
-    "BA":     ["Boeing"],
-    "LMT":    ["Lockheed Martin"],
-    "RTX":    ["Raytheon"],
-    "NOC":    ["Northrop Grumman Corporation", "Northrop Grumman"],
-    "GD":     ["General Dynamics"],
-    "CAT":    ["Caterpillar"],
-    "DE":     ["Deere & Company", "John Deere", "Deere"],
-    "FDX":    ["FedEx Corporation", "FedEx"],
-    "MMM":    ["3M"],
-    "VZ":     ["Verizon"],
-    "NEE":    ["NextEra Energy, Inc."],
-    "SRE":    ["Sempra"],
-
-    # ── USA REITs & FINANCIAL ASSETS ────────────────────────────────────────
-    "AMT":    ["American Tower Corporation", "American Tower"],
-    "PLD":    ["Prologis"],
-    "EQIX":   ["Equinix"],
-    "PSA":    ["Public Storage"],
-    "O":      ["Realty Income"],
-    "DLR":    ["Digital Realty Trust, Inc.", "Digital Realty"],
-    "SPG":    ["Simon Property"],
-    "VICI":   ["VICI Properties Inc."],
-    "OHI":    ["Omega Healthcare Investors, Inc."],
-    "WPC":    ["W. P. Carey Inc."],
-    "NNN":    ["NNN REIT, Inc."],
-    "EXR":    ["Extra Space Storage"],
-    "WELL":   ["Welltower Inc."],
-    "SBAC":   ["SBA Communications Corporation"],
-    "VTR":    ["Ventas, Inc."],
-
-    # ── DEUTSCHLAND ─────────────────────────────────────────────────────────
-    "ADS.DE":  ["Adidas"],
-    "AIR.DE":  ["Airbus"],
-    "ALV.DE":  ["Allianz"],
-    "BAS.DE":  ["BASF"],
-    "BAYN.DE": ["Bayer"],
-    "BEI.DE":  ["Beiersdorf", "Nivea"],
-    "BMW.DE":  ["BMW", "Bayerische Motoren Werke"],
-    "CBK.DE":  ["Commerzbank"],
-    "CON.DE":  ["Continental"],
-    "DBK.DE":  ["Deutsche Bank"],
-    "DB1.DE":  ["Deutsche Boerse", "Deutsche Börse"],
-    "DHL.DE":  ["DHL", "Deutsche Post"],
-    "DTE.DE":  ["Deutsche Telekom", "Telekom"],
-    "EOAN.DE": ["EON", "E.ON"],
-    "ENR.DE":  ["Siemens Energy"],
-    "FRE.DE":  ["Fresenius"],
-    "HEI.DE":  ["Heidelberg Materials", "HeidelbergCement"],
-    "HEN3.DE": ["Henkel"],
-    "IFX.DE":  ["Infineon"],
-    "MBG.DE":  ["Mercedes", "Daimler"],
-    "MRK.DE":  ["Merck KGaA", "Merck Darmstadt"],
-    "MTX.DE":  ["MTU Aero", "MTU"],
-    "MUV2.DE": ["Munich Re", "Muenchener Rueck", "Muenchen Re", "Münchener Rück"],
-    "P911.DE": ["Porsche AG"],
-    "PAH3.DE": ["Porsche SE", "Porsche Holding"],
-    "PUM.DE":  ["Puma"],
-    "RHM.DE":  ["Rheinmetall"],
-    "RWE.DE":  ["RWE"],
-    "SAP.DE":  ["SAP"],
-    "SRT3.DE": ["Sartorius"],
-    "SHL.DE":  ["Siemens Healthineers"],
-    "SIE.DE":  ["Siemens"],
-    "SY1.DE":  ["Symrise"],
-    "TKA.DE":  ["ThyssenKrupp", "Thyssenkrupp"],
-    "VNA.DE":  ["Vonovia"],
-    "VOW3.DE": ["Volkswagen", "VW"],
-    "ZAL.DE":  ["Zalando"],
-    "BNR.DE":  ["Brenntag"],
-    "BOSS.DE": ["Hugo Boss", "Boss"],
-    "BVB.DE":  ["Borussia Dortmund", "BVB"],
-    "HLAG.DE": ["Hapag-Lloyd"],
-    "HOT.DE":  ["Hochtief"],
-    "LEG.DE":  ["LEG Immobilien"],
-    "NDX1.DE": ["Nordex"],
-    "PBB.DE":  ["Pfandbriefbank", "Deutsche Pfandbriefbank"],
-    "SDF.DE":  ["K+S", "Kali und Salz"],
-    "TAG.DE":  ["TAG Immobilien"],
-    "TTK.DE":  ["TeamViewer"],
-    "VAR1.DE": ["Varta"],
-    "BC8.DE":  ["Bechtle"],
-    "EVD.DE":  ["CTS Eventim"],
-    "FRA.DE":  ["Fraport"],
-    "GFT.DE":  ["GFT Technologies"],
-    "BSRRF":   ["BASF SE"],
-    "BMWYY":   ["Bayerische Motoren Werke AG (BMW)"],
-    "FMS":     ["Fresenius Medical Care AG"],
-
-    # ── FRANKREICH ──────────────────────────────────────────────────────────
-    "AI.PA":   ["Air Liquide"],
-    "CS.PA":   ["AXA"],
-    "BN.PA":   ["Danone"],
-    "DSY.PA":  ["Dassault Systemes"],
-    "ENGI.PA": ["Engie", "GDF Suez"],
-    "EL.PA":   ["EssilorLuxottica", "Essilor"],
-    "RMS.PA":  ["Hermes", "Hermès"],
-    "KER.PA":  ["Kering", "Gucci", "Balenciaga"],
-    "OR.PA":   ["LOreal", "L'Oreal"],
-    "MC.PA":   ["LVMH", "Louis Vuitton"],
-    "RI.PA":   ["Pernod Ricard"],
-    "SAF.PA":  ["Safran"],
-    "SGO.PA":  ["Saint-Gobain"],
-    "SAN.PA":  ["Sanofi"],
-    "SU.PA":   ["Schneider Electric"],
-    "GLE.PA":  ["Societe Generale"],
-    "TTE.PA":  ["TotalEnergies", "Total"],
-    "DG.PA":   ["Vinci"],
-    "BNP.PA":  ["BNP Paribas", "BNP"],
-    "ACA.PA":  ["Credit Agricole"],
-    "VIE.PA":  ["Veolia"],
-    "ML.PA":   ["Michelin"],
-    "STLA.PA": ["Stellantis", "Fiat", "Peugeot"],
-    "RNO.PA":  ["Renault"],
-    "CA.PA":   ["Carrefour"],
-    "CRARY":   ["Crédit Agricole S.A."],
-    "PRNDY":   ["Pernod Ricard SA"],
-    "BNPQY":   ["BNP Paribas SA"],
-    "BOUYY":   ["Bouygues SA"],
-    "VCISY":   ["Vinci SA"],
-    "SCGLY":   ["Société Générale Société anonyme"],
-    "PPRUY":   ["Kering SA"],
-    "SOCNF":   ["Societe Generale"],
-    "HDELY":   ["Heidelberg Materials AG"],
-    "EADSY":   ["Airbus SE"],
-
-    # ── SPANIEN & ITALIEN ───────────────────────────────────────────────────
-    "SAN.MC":  ["Santander"],
-    "BBVA.MC": ["BBVA"],
-    "IBE.MC":  ["Iberdrola"],
-    "ITX.MC":  ["Inditex", "Zara"],
-    "TEF.MC":  ["Telefonica"],
-    "REP.MC":  ["Repsol"],
-    "ENEL.MI": ["Enel"],
-    "ENI.MI":  ["Eni"],
-    "RACE.MI": ["Ferrari"],
-    "UCG.MI":  ["UniCredit"],
-    "ISP.MI":  ["Intesa Sanpaolo", "Intesa"],
-    "G.MI":    ["Generali"],
-    "STM.MI":  ["STMicroelectronics", "ST Micro"],
-    "IDEXY":   ["Industria de Diseño Textil, S.A."],
-    "SAPMY":   ["Saipem S.p.A."],
-    "EURBF":   ["Eurobank Ergasias Services and Holdings S.A."],
-    "GLOF":    ["Assicurazioni Generali S.p.A."],
-
-    # ── SCHWEIZ & NIEDERLANDE & UK ──────────────────────────────────────────
-    "ASML.AS": ["ASML"],
-    "ADYEN.AS":["Adyen"],
-    "NESN.SW": ["Nestle", "Nestlé"],
-    "ROG.SW":  ["Roche"],
-    "NOVN.SW": ["Novartis"],
-    "ABBN.SW": ["ABB"],
-    "UBSG.SW": ["UBS"],
-    "ZURN.SW": ["Zurich Insurance", "Zurich"],
-    "AZN.L":   ["AstraZeneca"],
-    "HSBA.L":  ["HSBC"],
-    "ULVR.L":  ["Unilever"],
-    "GSK.L":   ["GSK", "GlaxoSmithKline"],
-    "BP.L":    ["BP"],
-    "SHEL.L":  ["Shell"],
-    "ADRNY":   ["Koninklijke Ahold Delhaize N.V."],
-    "AKZOY":   ["Akzo Nobel N.V."],
-    "AAMWY":   ["ABN AMRO Bank N.V."],
-    "NXPI":    ["NXP Semiconductors N.V."],
-    "LOGI":    ["Logitech International S.A."],
-
-    # ── ASIEN & CHINA & GLOBAL ADRs ─────────────────────────────────────────
-    "BABA":    ["Alibaba"],
-    "TCEHY":   ["Tencent OTC"],
-    "JD":      ["JD.com"],
-    "BIDU":    ["Baidu"],
-    "PDD":     ["Pinduoduo", "Temu"],
-    "NIO":     ["NIO"],
-    "0700.HK": ["Tencent", "Tencent HK"],
-    "9988.HK": ["Alibaba HK"],
-    "2318.HK": ["Ping An Insurance", "Ping An"],
-    "7203.T":  ["Toyota"],
-    "6758.T":  ["Sony"],
-    "9984.T":  ["SoftBank"],
-    "005930.KS": ["Samsung", "Samsung Electronics"],
-    "KSPI":    ["Joint Stock Company Kaspi.kz"],
-    "BSBR":    ["Banco Santander (Brasil) S.A."],
-    "BBDO":    ["Banco Bradesco S.A."],
-    "UNLRF":   ["PT Unilever Indonesia Tbk"],
-    "BCRFY":   ["Banco Santander, S.A."],
-    "FMTYP":   ["BANCO BANESTES S.A."],
-    "TIMB":    ["TIM S.A."],
-    "GGAL":    ["Grupo Financiero Galicia S.A."],
-    "CIB":     ["Grupo Aval Acciones y Valores S.A."],
-    "IMPUY":   ["Impala Platinum Holdings Limited"],
-    "HMY":     ["Harmony Gold Mining Company Limited"],
-    "GARPF":   ["Golden Agri-Resources Ltd"],
-    "EMBJ":    ["Embraer S.A."],
-    "WMLWY":   ["Wal-Mart de México, S.A.B. de C.V."],
-    "BVN":     ["Compañía de Minas Buenaventura S.A.A."],
-    "BAP":     ["Credicorp Ltd."],
-
-    # ── RESTLICHE GLOBAL ASSETS (CEFs, BDCs, Vorzugsaktien) ──────────────────
-    "IEP":     ["Icahn Enterprises L.P."],
-    "DHT":     ["DHT Holdings, Inc."],
-    "PDI":     ["PIMCO Dynamic Income Fund"],
-    "FSK":     ["FS KKR Capital Corp."],
-    "AGNC":    ["AGNC Investment Corp."],
-    "STWD":    ["Starwood Property Trust, Inc."],
-    "OTF":     ["Blue Owl Technology Finance Corp."],
-    "PTY":     ["PIMCO Corporate and Income Strategy Fund"],
-    "BKRFY":   ["PT Bank Rakyat Indonesia (Persero) Tbk"],
-    "MPL":     ["MRP Properties Trust"],
-    "PFL":     ["PIMCO Income Strategy Fund"],
-    "BXSL":    ["Blackstone Shareholder Corp."],
-    "BHFAP":   ["Brighthouse Financial, Inc."],
-    "OBDC":    ["Blue Owl Capital Corporation"],
-    "PHMF":    ["PT Hanjaya Mandala Sampoerna Tbk"],
-    "JPC":     ["Nuveen Preferred & Income Opportunities Fund"],
-    "NMT":     ["Nuveen Municipal Investment Quality Trust"],
-    "NZF":     ["Nuveen Municipal Credit Income Fund"],
-    "AMBP":    ["Ardagh Metal Packaging S.A."],
-    "PTAIY":   ["PT Astra International Tbk"],
-    "RNLSY":   ["Renascor Resources Limited"],
-    "CLM":     ["Cornerstone Strategic Value Fund, Inc."],
-    "BSM":     ["Black Stone Minerals, L.P."],
-    "USAC":    ["USA Compression Partners, LP"],
-    "NLY-PG":  ["Annaly Capital Management, Inc."],
-    "SBSW":    ["Sibanye Stillwater Limited"],
-    "SBR":     ["Sabine Royalty Trust"],
-    "LDSCY":   ["Land Securities Group plc"],
-    "NAD":     ["Nuveen Quality Municipal Income Fund"],
-    "NEA":     ["Nuveen AMT-Free Quality Municipal Income Fund"],
-    "KYN":     ["Kayne Anderson Energy Infrastructure Fund, Inc."],
-    "CSQ":     ["Calamos Strategic Total Return Fund"],
-    "AXS-PE":  ["Axis Capital Holdings Limited"],
-    "RLJ-PA":  ["RLJ Lodging Trust"],
-    "VNO-PM":  ["Vornado Realty Trust"],
-    "VICI":    ["VICI Properties Inc."],
-    "EPR":     ["EPR Properties"],
-    "CALM":    ["Cal-Maine Foods, Inc."],
-    "VIV":     ["Telefônica Brasil S.A."],
-    "VONOY":   ["Vonovia SE"],
-    "PBC":     ["DNP Select Income Fund Inc."],
-    "PBCRY":   ["Public Joint Stock Company Mining and Metallurgical Company Norilsk Nickel"],
-    "TFSL":    ["TFS Financial Corporation"],
-    "SLG-PI":  ["SL Green Realty Corp."],
-    "ADX":     ["Adams Diversified Equity Fund, Inc."],
-    "GIS":     ["General Mills, Inc."],
-    "RNR-PF":  ["RenaissanceRe Holdings Ltd."],
-    "ACGLO":   ["Arch Capital Group Ltd."],
-    "MAA":     ["Mid-America Apartment Communities, Inc."],
-    "OMF":     ["OneMain Holdings, Inc."],
-    "INSW":    ["International Seaways, Inc."],
-    "DLR-PJ":  ["Digital Realty Trust, Inc."],
-    "UTG":     ["Reaves Utility Income Fund"],
-    "VALE":    ["Vale S.A."],
-    "EVT":     ["Eaton Vance Tax-Advantaged Dividend Income Fund"],
-    "FCPT":    ["Four Corners Property Trust, Inc."],
-    "CRRFY":   ["Carrefour SA"],
-    "PSA-PQ":  ["Public Storage"],
-    "PSA-PK":  ["Public Storage"],
-    "ATH-PA":  ["Athene Holding Ltd."],
-    "DLR-PL":  ["Digital Realty Trust, Inc."],
-    "SCHW-PD": ["The Charles Schwab Corporation"],
-    "FSUGY":   ["Fortescue Ltd"],
-    "CMBT":    ["CmbTech NV"],
-    "MET-PE":  ["MetLife, Inc."],
-    "HIW":     ["Highwoods Properties, Inc."],
-    "SFD":     ["Smithfield Foods, Inc."],
-    "ARE":     ["Alexandria Real Estate Equities, Inc."],
-    "GDV":     ["The Gabelli Dividend & Income Trust"],
-    "TU":      ["TELUS Corporation"],
-    "KRC":     ["Kilroy Realty Corporation"],
-    "LINE":    ["Lineage, Inc."],
-    "BCE":     ["BCE Inc."],
-    "EIX":     ["Edison International"],
-    "EPD":     ["Enterprise Products Partners L.P."],
-    "MET-PA":  ["MetLife, Inc."],
-    "MTN":     ["Vail Resorts, Inc."],
-    "CMCSA":   ["Comcast Corporation"],
-    "MAIN":    ["Main Street Capital Corporation"],
-    "RLX":     ["RLX Technology Inc."],
-    "HR":      ["Healthcare Realty Trust Incorporated"],
-    "LCII":    ["LCI Industries"],
-    "SUNC":    ["Suncor Energy Inc."],
-    "BCH":     ["Banco de Chile"],
-    "UGI":     ["UGI Corporation"],
-    "ENLAY":   ["Enel S.p.A."],
-    "ORANY":   ["Orange S.A."],
-    "OGE":     ["OGE Energy Corp."],
-    "NWG":     ["NatWest Group plc"],
-    "CCI":     ["Crown Castle Inc."],
-    "LTC":     ["LTC Properties, Inc."],
-    "BEP":     ["Brookfield Renewable Partners L.P."],
-    "VNOM":    ["Viper Energy, Inc."],
-    "LAZ":     ["Lazard Inc."],
-    "RIO":     ["Rio Tinto Group"],
-    "BEPC":    ["Brookfield Renewable Corporation"],
-    "NWBIO":   ["Northwest Biotherapeutics, Inc."],
-    "APLE":    ["Apple Hospitality REIT, Inc."],
-    "EMN":     ["Eastman Chemical Company"],
-    "SLG":     ["SL Green Realty Corp."],
-    "AU":      ["AngloGold Ashanti PLC"],
-    "CQP":     ["Cheniere Energy Partners, L.P."],
-    "CNXC":    ["Concentrix Corporation"],
-    "VIPS":    ["Vipshop Holdings Limited"],
-    "FG":      ["F&G Annuities & Life, Inc."],
-    "TRN":     ["Trinity Industries, Inc."],
-    "BHP":     ["BHP Group Limited"],
-    "MC":      ["Moelis & Company"],
-    "KEP":     ["Korea Electric Power Corporation"],
-    "VEOEY":   ["Veolia Environnement S.A."],
-    "ABEV":    ["Ambev S.A."],
-    "LNT":     ["Alliant Energy Corporation"],
-    "IRT":     ["Independence Realty Trust, Inc."],
-    "TAP":     ["Molson Coors Beverage Company"],
-    "FIS":     ["Fidelity National Information Services, Inc."],
-    "ES":      ["Eversource Energy"],
-    "KRG":     ["Kite Realty Group Trust"],
-    "NSP":     ["Insperity, Inc."],
-    "VSNT":    ["Versant Media Ltd."],
-    "BX":      ["Blackstone Inc."],
-    "BXP":     ["BXP, Inc."],
-    "CLX":     ["The Clorox Company"],
-    "HTHT":    ["H World Group Limited"],
-    "REXR":    ["Rexford Industrial Realty, Inc."],
-    "SMG":     ["The Scotts Miracle-Gro Company"],
-    "AES":     ["The AES Corporation"],
-    "ULTA":    ["Ulta Beauty, Inc."],
-    "HASI":    ["HA Sustainable Infrastructure Capital, Inc."],
-    "SMA":     ["SmartStop Self Storage REIT, Inc."],
-    "MGDDF":   ["Compagnie de Saint-Gobain S.A."],
-    "DOC":     ["Healthpeak Properties, Inc."],
-    "CUZ":     ["Cousins Properties Incorporated"],
-    "ARES":    ["Ares Management Corporation"],
-    "AESI":    ["Atlas Energy Solutions Inc."],
-    "BKRIY":   ["Bank of Ireland Group plc"],
-    "DOW":     ["Dow Inc."],
-    "SNYYF":   ["Sanyo Electric Co., Ltd."],
-    "LXP":     ["LXP Industrial Trust"],
-    "AXIA":    ["AXIA Energy Ltd."],
-    "NE":      ["Noble Corporation plc"],
-    "VMRK":    ["AvalonBay Communities, Inc."],
-    "BTI":     ["British American Tobacco p.l.c."],
-    "NWN":     ["Northwest Natural Holding Company"],
-    "FE":      ["FirstEnergy Corp."],
-    "PBA":     ["Pembina Pipeline Corporation"],
-    "REYN":    ["Reynolds Consumer Products Inc."],
-    "WF":      ["Woori Financial Group Inc."],
-    "BOH":     ["Bank of Hawaii Corporation"],
-    "EVRG":    ["Evergy, Inc."],
-    "BP":      ["BP p.l.c."],
-    "STEP":    ["StepStone Group Inc."],
-    "WIT":     ["Wipro Limited"],
-    "WSBC":    ["WesBanco, Inc."],
-    "NGG":     ["National Grid plc"],
-    "SIRI":    ["Sirius XM Holdings Inc."],
-    "KGS":     ["Kodiak Gas Services, Inc."],
-    "SR":      ["Spire Inc."],
-    "HSBC":    ["HSBC Holdings plc"],
-    "HPQ":     ["HP Inc."],
-    "VICR":    ["Vicor Corporation"],
-    "WAFD":    ["Washington Federal, Inc."],
-    "MZTI":    ["The Marzetti Company"],
-    "WPP":     ["WPP plc"],
-    "ESS":     ["Essex Property Trust, Inc."],
-    "CG":      ["The Carlyle Group Inc."],
-    "PB":      ["Prosperity Bancshares, Inc."],
-    "GRFS":    ["Grifols, S.A."],
-    "DOX":     ["Amdocs Limited"],
-    "FRME":    ["First Merchants Corporation"],
-    "PECO":    ["Phillips Edison & Company, Inc."],
-    "RHP":     ["Ryman Hospitality Properties, Inc."],
-    "TIGO":    ["Millicom International Cellular S.A."],
-    "ELS":     ["Equity LifeStyle Properties, Inc."],
-    "FAF":     ["First American Financial Corporation"],
-    "TGOPY":   ["Grupo Televisa, S.A.B."],
-    "GSK":     ["GSK plc"],
-    "VODPF":   ["Vodafone Group Plc"],
-    "MDC":     ["M.D.C. Holdings, Inc."],
-    "AAMWY":   ["ABN AMRO Bank N.V."],
-    "WLK":     ["Westlake Corporation"],
-    "CPB":     ["Campbell Soup Company"],
-    "TRNO":    ["Terreno Realty Corporation"],
-    "INGR":    ["Ingredion Incorporated"],
-    "KMI":     ["Kinder Morgan, Inc."],
-    "CMS":     ["CMS Energy Corporation"],
-    "CHRD":    ["Chord Energy Corporation"],
-    "EGP":     ["EastGroup Properties, Inc."],
-    "GPC":     ["Genuine Parts Company"],
-    "PTEN":    ["Patterson-UTI Energy, Inc."],
-    "LVMUY":   ["LVMH Moët Hennessy - Louis Vuitton, SE"],
-    "BNS":     ["The Bank of Nova Scotia"],
-    "CSDXF":   ["COSCO SHIPPING Ports Limited"],
-    "IVT":     ["InvenTrust Properties Corp."],
-    "AKZOY":   ["Akzo Nobel N.V."],
-    "CHT":     ["Chunghwa Telecom Co., Ltd."],
-    "VOD":     ["Vodafone Group Plc"],
-    "EQNR":    ["Equinor ASA"],
-    "YACAF":   ["Yamaichi Securities Co., Ltd."],
-    "CNA":     ["CNA Financial Corporation"],
-    "NTR":     ["Nutrien Ltd."],
-    "OPHYY":   ["Ono Pharmaceutical Co., Ltd."],
-    "TM":      ["Toyota Motor Corporation"],
-    "UBSI":    ["United Bankshares, Inc."],
-    "BF-A":    ["Brown-Forman Corporation"],
-    "LVS":     ["Las Vegas Sands Corp."],
-    "FITB":    ["Fifth Third Bancorp"],
-    "CPT":     ["Camden Property Trust"],
-    "FITBP":   ["Fifth Third Bancorp"],
-    "EDR":     ["Consolidated Edison, Inc."],
-    "ALPMY":   ["Astellas Pharma Inc."],
-    "DRH":     ["DiamondRock Hospitality Company"],
-    "INDB":    ["Independent Bank Corp."],
-    "BAH":     ["Booz Allen Hamilton Holding Corporation"],
-    "BKU":     ["BankUnited, Inc."],
-    "BZ":      ["KANZHUN LIMITED"],
-    "MCD":     ["McDonald's Corporation"],
-    "TMUS":    ["T-Mobile US, Inc."],
-    "UNH":     ["UnitedHealth Group Incorporated"],
-    "DRI":     ["Darden Restaurants, Inc."],
-    "POOL":    ["Pool Corporation"],
-    "RTO":     ["Rentokil Initial plc"],
-    "BRO":     ["Brown & Brown, Inc."],
-    "IRM":     ["Iron Mountain Incorporated"],
-    "KFY":     ["Korn Ferry"],
-    "MFC":     ["Manulife Financial Corporation"],
-    "ALV":     ["Autoliv, Inc."],
-    "AMCR":    ["Amcor plc"],
-    "RDN":     ["Radian Group Inc."],
-    "HD":      ["The Home Depot, Inc."],
-    "SHEL":    ["Shell plc"],
-    "FFIN":    ["First Financial Bankshares, Inc."],
-    "MDU":     ["MDU Resources Group, Inc."],
-    "YMM":     ["Full Truck Alliance Co. Ltd."],
-    "IVZ":     ["Invesco Ltd."],
-    "TSCO":    ["Tractor Supply Company"],
-    "FBP":     ["First BanCorp."],
-    "FHN":     ["First Horizon Corporation"],
-    "HOMB":    ["Home BancShares, Inc."],
-    "MAS":     ["Masco Corporation"],
-    "CWA":     ["Comcast Corporation"],
-    "FNB":     ["F.N.B. Corporation"],
-    "SWK":     ["Stanley Black & Decker, Inc."],
-    "BMO":     ["Bank of Montreal"],
-    "GARPF":   ["Golden Agri-Resources Ltd"],
-    "HLNE":    ["Hamilton Lane Incorporated"],
-    "UCBI":    ["United Community Banks, Inc."],
-    "TXN":     ["Texas Instruments Incorporated"],
-    "AEO":     ["American Eagle Outfitters, Inc."],
-    "GEF":     ["Greif, Inc."],
-    "SBAC":    ["SBA Communications Corporation"],
-    "KDP":     ["Keurig Dr Pepper Inc."],
-    "ATLKY":   ["Atlas Copco AB"],
-    "LW":      ["Lamb Weston Holdings, Inc."],
-    "SCGLY":   ["Société Générale Société anonyme"],
-    "SHG":     ["Shinhan Financial Group Co., Ltd."],
-    "VLVLY":   ["AB Volvo (publ)"],
-    "CVS":     ["CVS Health Corporation"],
-    "SHO":     ["Sunstone Hotel Investors, Inc."],
-    "CHCO":    ["City Holding Company"],
-    "HNHPF":   ["Hon Hai Precision Industry Co., Ltd."],
-    "UMC":     ["United Microelectronics Corporation"],
-    "CRBG":    ["Corebridge Financial, Inc."],
-    "DTM":     ["DT Midstream, Inc."],
-    "YUMC":    ["Yum China Holdings, Inc."],
-    "IDA":     ["IDACORP, Inc."],
-    "MGY":     ["Magnolia Oil & Gas Corporation"],
-    "MTDR":    ["Matador Resources Company"],
-    "VTRS":    ["Viatris Inc."],
-    "AFL":     ["Aflac Incorporated"],
-    "LEN-B":   ["Lennar Corporation"],
-    "EOG":     ["EOG Resources, Inc."],
-    "TKOMY":   ["Tokio Marine Holdings, Inc."],
-    "ALLE":    ["Allegion plc"],
-    "FHI":     ["Federated Hermes, Inc."],
-    "KMT":     ["Kennametal Inc."],
-    "LEN":     ["Lennar Corporation"],
-    "SSB":     ["SouthState Corporation"],
-    "DPZ":     ["Domino's Pizza, Inc."],
-    "AOS":     ["A. O. Smith Corporation"],
-    "FBIN":    ["Fortune Brands Innovations, Inc."],
-    "LOW":     ["Lowe's Companies, Inc."],
-    "PR":      ["Permian Resources Corporation"],
-    "SKYD":    ["Skydance Media / Skydance Corp."],
-    "WMG":     ["Warner Music Group Corp."],
-    "CURB":    ["Curbline Properties Corp."],
-    "HON":     ["Honeywell International Inc."],
-    "CATY":    ["Cathay General Bancorp"],
-    "OTTR":    ["Otter Tail Corporation"],
-    "RBC":     ["RBC Bearings Incorporated"],
-    "RY":      ["Royal Bank of Canada"],
-    "CBT":     ["Cabot Corporation"],
-    "ITW":     ["Illinois Tool Works Inc."],
-    "MTC":     ["MMTEC, Inc."],
-    "RGA":     ["Reinsurance Group of America, Incorporated"],
-    "FUTU":    ["Futu Holdings Limited"],
-    "MFG":     ["Mizuho Financial Group, Inc."],
-    "SCBFY":   ["Standard Chartered PLC"],
-    "GIL":     ["Gildan Activewear Inc."],
-    "NTDOY":   ["Nintendo Co., Ltd."],
-    "HAS":     ["Hasbro, Inc."],
-    "PRK":     ["Park National Corporation"],
-    "AIG":     ["American International Group, Inc."],
-    "BR":      ["Broadridge Financial Solutions, Inc."],
-    "AMX":     ["América Móvil, S.A.B. de C.V."],
-    "ABBV":    ["AbbVie Inc."],
-    "EWBC":    ["East West Bancorp, Inc."],
-    "K":       ["Kellanova"],
-    "AMGN":    ["Amgen Inc."],
-    "DLB":     ["Dolby Laboratories, Inc."],
-    "GLNCY":   ["Glencore plc"],
-    "PBCT":    ["People's United Financial, Inc."],
-    "UBS":     ["UBS Group AG"],
-    "GNTX":    ["Gentex Corporation"],
-    "KO":      ["The Coca-Cola Company"],
-    "PUK":     ["Prudential plc"],
-    "PG":      ["The Procter & Gamble Company"],
-    "SLM":     ["SLM Corporation"],
-    "SM":      ["SM Energy Company"],
-    "VTMX":    ["Corporación Inmobiliaria Vesta, S.A.B. de C.V."],
-    "ADM":     ["Archer-Daniels-Midland Company"],
-    "TRI":     ["Thomson Reuters Corporation"],
-    "CPK":     ["Chesapeake Utilities Corporation"],
-    "KSS":     ["Kohl's Corporation"],
-    "MTSFY":   ["Mitsui & Co., Ltd."],
-    "AAP":     ["Advance Auto Parts, Inc."],
-    "VNO":     ["Vornado Realty Trust"],
-    "ATDAY":   ["Alimentation Couche-Tard Inc."],
-    "SOCNF":   ["Societe Generale"],
-    "AVY":     ["Avery Dennison Corporation"],
-    "SLGN":    ["Silgan Holdings Inc."],
-    "DEO":     ["Diageo plc"],
-    "SU":      ["Suncor Energy Inc."],
-    "GILD":    ["Gilead Sciences, Inc."],
-    "IT":      ["Gartner, Inc."],
-    "HRI":     ["Herc Holdings Inc."],
-    "MMS":     ["MAXIMUS, Inc."],
-    "CNI":     ["Canadian National Railway Company"],
-    "SIEGY":   ["Siemens Aktiengesellschaft"],
-    "NTRS":    ["Northern Trust Corporation"],
-    "RRR":     ["Red Rock Resorts, Inc."],
-    "ACT":     ["Enact Holdings, Inc."],
-    "ACM":     ["AECOM"],
-    "PHIN":    ["PHINIA Inc."],
-    "VFC":     ["V.F. Corporation"],
-    "NMRK":    ["Newmark Group, Inc."],
-    "RQL":     ["RBC Quant US Equity Leaders ETF"],
-    "PRDO":    ["Perdoceo Education Corporation"],
-    "RCI":     ["Rogers Communications Inc."],
-    "AMKBY":   ["A.P. Møller - Mærsk A/S"],
-    "CMPGY":   ["Compass Group PLC"],
-    "HLEON":   ["Haleon plc"],
-    "UNP":     ["Union Pacific Corporation"],
-    "BAESY":   ["BAE Systems plc"],
-    "FCNCA":   ["First Citizens BancShares, Inc."],
-    "FUL":     ["H.B. Fuller Company"],
-    "SSMXY":   ["Sinopec Shanghai Petrochemical Company Limited"],
-    "SMFG":    ["Sumitomo Mitsui Financial Group, Inc."],
-    "CMI":     ["Cummins Inc."],
-    "PSO":     ["Pearson plc"],
-    "SFBS":    ["ServisFirst Bancshares, Inc."],
-    "AZN":     ["AstraZeneca PLC"],
-    "CTSH":    ["Cognizant Technology Solutions Corporation"],
-    "MKTX":    ["MarketAxess Holdings Inc."],
-    "NRG":     ["NRG Energy, Inc."],
-    "AHR":     ["American Healthcare REIT, Inc."],
-    "BANF":    ["BancFirst Corporation"],
-    "SIGI":    ["Selective Insurance Group, Inc."],
-    "CLBK":    ["Columbia Financial, Inc."],
-    "SHAW":    ["Shaw Communications Inc."],
-    "CVE":     ["Cenovus Energy Inc."],
-    "NOV":     ["NOV Inc."],
-    "EADSY":   ["Airbus SE"],
-    "OSK":     ["Oshkosh Corporation"],
-    "R":       ["Ryder System, Inc."],
-    "VIRT":    ["Virtu Financial, Inc."],
-    "BAM":     ["Brookfield Asset Management Ltd."],
-    "TFII":    ["TFI International Inc."],
-    "RYAAY":   ["Ryanair Holdings plc"],
-    "CCL":     ["Carnival Corporation & plc"],
-    "BLK":     ["BlackRock, Inc."],
-    "LPX":     ["Louisiana-Pacific Corporation"],
-    "NSC":     ["Norfolk Southern Corporation"],
-    "WM":      ["Waste Management, Inc."],
-    "BKH":     ["Black Hills Corporation"],
-    "BUD":     ["Anheuser-Busch InBev SA/NV"],
-    "FDX":     ["FedEx Corporation"],
-    "INTU":    ["Intuit Inc."],
-    "THG":     ["The Hanover Insurance Group, Inc."],
-    "ATAT":    ["Atour Lifestyle Holdings Limited"],
-    "TNET":    ["TriNet Group, Inc."],
-    "LNGVO":   ["Lenovo Group Limited"],
-    "XYL":     ["Xylem Inc."],
-    "EBCO":    ["Ebara Corporation"],
-    "LOGI":    ["Logitech International S.A."],
-    "HCA":     ["HCA Healthcare, Inc."],
-    "UMBF":    ["UMB Financial Corporation"],
-    "WTFC":    ["Wintrust Financial Corporation"],
-    "WTTR":    ["Select Water Solutions, Inc."],
-    "LII":     ["Lennox International Inc."],
-    "CSL":     ["Carlisle Companies Incorporated"],
-    "DFKUY":   ["Daikin Industries, Ltd."],
-    "TAC":     ["TransAlta Corporation"],
-    "EMR":     ["Emerson Electric Co."],
-    "FDS":     ["FactSet Research Systems Inc."],
-    "WELL":    ["Welltower Inc."],
-    "CBC":     ["Central Bancompany, Inc."],
-    "CYATY":   ["Cathay General Bancorp"],
-    "DGX":     ["Quest Diagnostics Incorporated"],
-    "GGG":     ["Graco Inc."],
-    "GRMN":    ["Garmin Ltd."],
-    "EVR":     ["Evercore Inc."],
-    "DCI":     ["Donaldson Company, Inc."],
-    "PPRUY":   ["Kering SA"],
-    "SCHW":    ["The Charles Schwab Corporation"],
-    "AMP":     ["Ameriprise Financial, Inc."],
-    "ATKR":    ["Atkore Inc."],
-    "RJF":     ["Raymond James Financial, Inc."],
-    "DHI":     ["D.R. Horton, Inc."],
-    "CSX":     ["CSX Corporation"],
-    "EMBJ":    ["Embraer S.A."],
-    "MBGL":    ["Mobily (Etihad Etisalat Company)"],
-    "NOC":     ["Northrop Grumman Corporation"],
-    "PLMR":    ["Palomar Holdings, Inc."],
-    "SNDR":    ["Schneider National, Inc."],
-    "CXT":     ["Crane NXT, Co."],
-    "DLO":     ["DLocal Limited"],
-    "TEX":     ["Terex Corporation"],
-    "GLOF":    ["Assicurazioni Generali S.p.A."],
-    "LIN":     ["Linde plc"],
-    "MWA":     ["Mueller Water Products, Inc."],
-    "WFRD":    ["Weatherford International plc"],
-    "KNX":     ["Knight-Swift Transportation Holdings Inc."],
-    "PCAR":    ["PACCAR Inc"],
-    "YOU":     ["Clear Secure, Inc."],
-    "EQT":     ["EQT Corporation"],
-    "ROK":     ["Rockwell Automation, Inc."],
-    "SAP":     ["SAP SE"],
-    "BALL":    ["Ball Corporation"],
-    "DOO":     ["BRP Inc."],
-    "INGM":    ["Ingram Micro Holding Corporation"],
-    "RS":      ["Reliance, Inc."],
-    "PH":      ["Parker-Hannifin Corporation"],
-    "BWA":     ["BorgWarner Inc."],
-    "MSA":     ["MSA Safety Incorporated"],
-    "SYK":     ["Stryker Corporation"],
-    "TTAM":    ["Titan America SA"],
-    "BTE":     ["Baytex Energy Corp."],
-    "CHD":     ["Church & Dwight Co., Inc."],
-    "MEOH":    ["Methanex Corporation"],
-    "WMS":     ["Advanced Drainage Systems, Inc."],
-    "RSG":     ["Republic Services, Inc."],
-    "STE":     ["STERIS plc"],
-    "PLUS":    ["ePlus inc."],
-    "AGCO":    ["AGCO Corporation"],
-    "NHC":     ["National HealthCare Corporation"],
-    "SNT":     ["Senstar Technologies Ltd."],
-    "BYD":     ["BYD Company Limited"],
-    "CCK":     ["Crown Holdings, Inc."],
-    "NDSN":    ["Nordson Corporation"],
-    "RLI":     ["RLI Corp."],
-    "GWW":     ["W.W. Grainger, Inc."],
-    "OGCA":    ["OceanGold Corp."],
-    "AON":     ["Aon plc"],
-    "MSI":     ["Motorola Solutions, Inc."],
-    "TROW":    ["T. Rowe Price Group, Inc."],
-    "TFX":     ["Teleflex Incorporated"],
-    "TNK":     ["Teekay Tankers Ltd."],
-    "VRSK":    ["Verisk Analytics, Inc."],
-    "WSFS":    ["WSFS Financial Corporation"],
-    "SIMO":    ["Silicon Motion Technology Corporation"],
-    "SLDE":    ["Slide Insurance Company"],
-    "DE":      ["Deere & Company"],
-    "ASO":     ["Academy Sports and Outdoors, Inc."],
-    "HUBB":    ["Hubbell Incorporated"],
-    "CHH":     ["Choice Hotels International, Inc."],
-    "EBAY":    ["eBay Inc."],
-    "ECL":     ["Ecolab Inc."],
-    "ZBH":     ["Zimmer Biomet Holdings, Inc."],
-    "J":       ["Jacobs Solutions Inc."],
-    "KLIC":    ["Kulicke and Soffa Industries, Inc."],
-    "PCRHY":   ["Panasonic Holdings Corporation"],
-    "ABM":     ["ABM Industries Incorporated"],
-    "AMER":    ["Ameriprise Financial, Inc."],
+# ── Börsen-Namen (Suffix nach dem Punkt = Yahoo-Börsenkennung) ───────────────────────────────
+EXCHANGES = {
+    ".DE": "Xetra", ".PA": "Paris", ".MI": "Mailand", ".MC": "Madrid", ".AS": "Amsterdam", ".L": "London",
+    ".SW": "Zürich", ".ST": "Stockholm", ".CO": "Kopenhagen", ".OL": "Oslo", ".HE": "Helsinki", ".VI": "Wien",
+    ".LS": "Lissabon", ".BR": "Brüssel", ".IS": "Istanbul", ".JO": "Johannesburg", ".SR": "Riad", ".T": "Tokio",
+    ".HK": "Hongkong", ".KS": "Seoul", ".AX": "Sydney (ASX)", ".TO": "Toronto (TSX)", ".SA": "São Paulo", ".MX": "Mexiko",
 }
 
 
+def get_exchange(ticker: str) -> str:
+    up = ticker.upper()
+    for suf in sorted(EXCHANGES, key=len, reverse=True):
+        if up.endswith(suf):
+            return EXCHANGES[suf]
+    return "USA"
+
+
+# ── Normalisierung ───────────────────────────────────────────────────────────────────────────
+_SPECIAL = str.maketrans({"ø": "o", "æ": "ae", "ł": "l", "ß": "ss", "đ": "d", "œ": "oe"})
+
+
+def _norm(s: str) -> str:
+    """Kleinschreibung, ohne Akzente/Umlaute, '&', Punkte und Apostrophe; sonstige Zeichen -> Leerzeichen."""
+    s = unicodedata.normalize("NFKD", str(s).lower().translate(_SPECIAL))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[&.'’`]", "", s)
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return s.strip()
+
+
 def _tokenize(s: str) -> list[str]:
-    """Splittet einen String in Tokens und normalisiert."""
-    n = _norm(s)
-    tokens = re.split(r'[\s\-\.]+', n)
-    return [t for t in tokens if t]
+    return _norm(s).split()
 
 
-def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> list[str]:
-    """Sucht Ticker nach Name oder Symbol."""
-    q = query.strip()
-    if not q:
-        return []
+# ── ISIN / WKN ───────────────────────────────────────────────────────────────────────────────
+def _isin_valid(isin: str) -> bool:
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", isin):
+        return False
+    digits = "".join(str(int(c, 36)) for c in isin)       # A=10 … Z=35
+    total, dbl = 0, False
+    for ch in reversed(digits):
+        n = int(ch)
+        if dbl:
+            n *= 2
+            n = n - 9 if n > 9 else n
+        total += n
+        dbl = not dbl
+    return total % 10 == 0
 
-    q_norm   = _norm(q)
-    q_tokens = _tokenize(q)
 
-    if not q_tokens:
-        return []
+# Bekannte Standardwerte (Prüfziffer wird beim Import geprüft; fehlerhafte Einträge werden verworfen).
+# Alle weiteren ISIN kommen aus ticker_meta.json (build_ticker_meta.py).
+_ISIN_SEED = {
+    "DE0007164600": "SAP.DE", "DE0008404005": "ALV.DE", "DE0007236101": "SIE.DE", "DE0005557508": "DTE.DE",
+    "DE0005190003": "BMW.DE", "DE0007664039": "VOW3.DE", "DE0007100000": "MBG.DE", "DE000BASF111": "BAS.DE",
+    "DE000A1EWWW0": "ADS.DE", "DE0005140008": "DBK.DE", "DE0007030009": "RHM.DE", "DE0008430026": "MUV2.DE",
+    "DE0006231004": "IFX.DE", "DE000BAY0017": "BAYN.DE", "DE000ENAG999": "EOAN.DE", "DE0007037129": "RWE.DE",
+    "DE0005552004": "DHL.DE", "DE0006048432": "HEN3.DE", "DE000CBK1001": "CBK.DE", "NL0000235190": "AIR.PA",
+    "US0378331005": "AAPL", "US5949181045": "MSFT", "US67066G1040": "NVDA", "US0231351067": "AMZN",
+    "US02079K3059": "GOOGL", "US30303M1027": "META", "US88160R1014": "TSLA", "US1912161007": "KO",
+    "US4781601046": "JNJ", "US7427181091": "PG", "US30231G1022": "XOM", "US46625H1005": "JPM",
+    "CH0038863350": "NESN.SW", "CH0012005267": "NOVN.SW", "FR0000121014": "MC.PA", "NL0010273215": "ASML.AS",
+    "DK0062498333": "NOVO-B.CO", "GB00BP6MXD84": "SHEL.L",
+}
 
-    results: list[tuple[int, str, str]] = []
+# ── Optionale, automatisch erzeugte Metadaten (Yahoo): Name, Sektor, Industrie, ISIN ───────────
+_META_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ticker_meta.json")
 
-    for ticker in all_tickers:
-        t_lower  = ticker.lower()
-        t_norm   = _norm(ticker)
-        names    = TICKER_NAMES.get(ticker, [])
-        best_prio = None
-        best_name = names[0] if names else ticker
 
-        if t_lower == q.lower():
-            best_prio = 0
-        elif t_norm.startswith(q_norm) or t_lower.startswith(q.lower()):
-            best_prio = 1
-        elif q_norm in t_norm:
-            best_prio = 6
+@lru_cache(maxsize=1)
+def _load_meta() -> dict:
+    try:
+        with open(_META_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("tickers", data) if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
-        for name in names:
-            name_norm   = _norm(name)
-            name_tokens = _tokenize(name)
 
-            if name_norm == q_norm:
-                if best_prio is None or best_prio > 2:
-                    best_prio = 2; best_name = name
-                break
+def get_meta(ticker: str) -> dict:
+    return _load_meta().get(ticker, {})
 
-            if name_norm.startswith(q_norm):
-                if best_prio is None or best_prio > 3:
-                    best_prio = 3; best_name = name
-                continue
 
-            all_match = True
-            for qt in q_tokens:
-                tok_match = any(nt.startswith(qt) for nt in name_tokens)
-                if not tok_match:
-                    all_match = False
-                    break
-            if all_match:
-                if best_prio is None or best_prio > 4:
-                    best_prio = 4; best_name = name
-                continue
+def get_sector(ticker: str) -> str:
+    m = get_meta(ticker)
+    return " · ".join(x for x in (m.get("sector"), m.get("industry")) if x)
 
-            if q_norm in name_norm:
-                if best_prio is None or best_prio > 5:
-                    best_prio = 5; best_name = name
 
-        if best_prio is not None:
-            label = f"{ticker} — {best_name}" if best_name != ticker else ticker
-            results.append((best_prio, ticker, label))
+# ── Themen-/Sektor-Synonyme (deutsche Labels werden automatisch aus database.GROUP_LABELS gelesen) ──
+GROUP_SYNONYMS = {
+    "defense": ["DEFENSE_AEROSPACE"], "defence": ["DEFENSE_AEROSPACE"], "verteidigung": ["DEFENSE_AEROSPACE"],
+    "waffen": ["DEFENSE_AEROSPACE"], "ruestung": ["DEFENSE_AEROSPACE"], "aerospace": ["DEFENSE_AEROSPACE"],
+    "oil": ["ENERGY_OIL_GAS", "SP500_ENERGY"], "oel": ["ENERGY_OIL_GAS"], "ol": ["ENERGY_OIL_GAS", "SP500_ENERGY"], "gas": ["ENERGY_OIL_GAS"],
+    "erdoel": ["ENERGY_OIL_GAS"], "energy": ["ENERGY_OIL_GAS", "SP500_ENERGY", "EV_CLEAN_ENERGY"],
+    "energie": ["ENERGY_OIL_GAS", "SP500_ENERGY", "EV_CLEAN_ENERGY", "UTILITIES_INFRASTRUCTURE"],
+    "mining": ["METALS_MINING_DIVERSIFIED", "GOLD_SILVER", "URANIUM_NUCLEAR", "BATTERY_METALS_RARE_EARTHS"],
+    "bergbau": ["METALS_MINING_DIVERSIFIED", "GOLD_SILVER", "URANIUM_NUCLEAR", "BATTERY_METALS_RARE_EARTHS"],
+    "rohstoffe": ["METALS_MINING_DIVERSIFIED", "GOLD_SILVER", "URANIUM_NUCLEAR", "BATTERY_METALS_RARE_EARTHS", "ENERGY_OIL_GAS"],
+    "metalle": ["METALS_MINING_DIVERSIFIED", "GOLD_SILVER", "BATTERY_METALS_RARE_EARTHS"],
+    "gold": ["GOLD_SILVER"], "silver": ["GOLD_SILVER"], "silber": ["GOLD_SILVER"], "edelmetall": ["GOLD_SILVER"],
+    "edelmetalle": ["GOLD_SILVER"], "uranium": ["URANIUM_NUCLEAR"], "uran": ["URANIUM_NUCLEAR"],
+    "nuclear": ["URANIUM_NUCLEAR"], "atom": ["URANIUM_NUCLEAR"], "kernkraft": ["URANIUM_NUCLEAR"],
+    "kernenergie": ["URANIUM_NUCLEAR"], "copper": ["METALS_MINING_DIVERSIFIED"], "kupfer": ["METALS_MINING_DIVERSIFIED"],
+    "lithium": ["BATTERY_METALS_RARE_EARTHS"], "batterie": ["BATTERY_METALS_RARE_EARTHS"],
+    "rare": ["BATTERY_METALS_RARE_EARTHS"], "seltene": ["BATTERY_METALS_RARE_EARTHS"],
+    "chips": ["AI_SEMICONDUCTORS"], "halbleiter": ["AI_SEMICONDUCTORS"], "semiconductor": ["AI_SEMICONDUCTORS"],
+    "semis": ["AI_SEMICONDUCTORS"], "ai": ["AI_SEMICONDUCTORS", "SOFTWARE_CLOUD_CYBER"], "ki": ["AI_SEMICONDUCTORS", "SOFTWARE_CLOUD_CYBER"],
+    "software": ["SOFTWARE_CLOUD_CYBER"], "cloud": ["SOFTWARE_CLOUD_CYBER"], "cyber": ["SOFTWARE_CLOUD_CYBER"],
+    "bank": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"], "banken": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"],
+    "banks": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"], "finanz": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"],
+    "versicherung": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"], "insurance": ["FINANCIALS_PAYMENTS", "SP500_FINANCIALS"],
+    "pharma": ["HEALTHCARE_PHARMA", "SP500_HEALTHCARE"], "healthcare": ["HEALTHCARE_PHARMA", "SP500_HEALTHCARE"],
+    "gesundheit": ["HEALTHCARE_PHARMA", "SP500_HEALTHCARE"], "biotech": ["HEALTHCARE_PHARMA", "SP500_HEALTHCARE"],
+    "immobilien": ["REAL_ESTATE_REITS_EUROPE", "SP500_REITS"], "reit": ["SP500_REITS", "REAL_ESTATE_REITS_EUROPE"],
+    "reits": ["SP500_REITS", "REAL_ESTATE_REITS_EUROPE"], "realestate": ["REAL_ESTATE_REITS_EUROPE", "SP500_REITS"],
+    "bau": ["CONSTRUCTION_INFRA_EUROPE"], "construction": ["CONSTRUCTION_INFRA_EUROPE"],
+    "auto": ["AUTOS"], "autos": ["AUTOS"], "cars": ["AUTOS"], "ev": ["EV_CLEAN_ENERGY", "CHINA_EV_AUTO"],
+    "telekom": ["TELECOM"], "telecom": ["TELECOM"], "mobilfunk": ["TELECOM"],
+    "airline": ["TRAVEL_AIRLINES_LOGISTICS"], "airlines": ["TRAVEL_AIRLINES_LOGISTICS"], "reise": ["TRAVEL_AIRLINES_LOGISTICS"],
+    "travel": ["TRAVEL_AIRLINES_LOGISTICS"], "logistik": ["TRAVEL_AIRLINES_LOGISTICS"], "shipping": ["TRAVEL_AIRLINES_LOGISTICS"],
+    "krypto": ["CRYPTO_FINTECH"], "crypto": ["CRYPTO_FINTECH"], "bitcoin": ["CRYPTO_FINTECH"], "fintech": ["CRYPTO_FINTECH"],
+    "versorger": ["UTILITIES_INFRASTRUCTURE", "SP500_UTILITIES"], "utilities": ["UTILITIES_INFRASTRUCTURE", "SP500_UTILITIES"],
+    "medien": ["MEDIA_ENTERTAINMENT"], "media": ["MEDIA_ENTERTAINMENT"], "chemie": ["CHEMICALS_FERTILIZER"],
+    "chemicals": ["CHEMICALS_FERTILIZER"], "duenger": ["CHEMICALS_FERTILIZER"], "luxus": ["LUXURY_FASHION"], "luxury": ["LUXURY_FASHION"],
+    "tabak": ["GENUSS_TABAK_ALKOHOL_SUESSES"], "alkohol": ["GENUSS_TABAK_ALKOHOL_SUESSES"], "bier": ["GENUSS_TABAK_ALKOHOL_SUESSES"],
+    "china": ["CHINA_TECH_INTERNET", "CHINA_FINANCE_ENERGY_TELECOM", "CHINA_EV_AUTO", "CHINA_CONSUMER_EDUCATION"],
+    "korea": ["KOSPI_KOREA", "KOREA_ADR"], "japan": ["NIKKEI_SELECTION"], "kanada": ["CANADA_TSX"], "canada": ["CANADA_TSX"],
+    "australien": ["AUSTRALIA_ASX"], "australia": ["AUSTRALIA_ASX"], "israel": ["ISRAEL_TECH_DEFENSE"],
+    "quanten": ["SPECULATIVE_AI_QUANTUM"], "quantum": ["SPECULATIVE_AI_QUANTUM"],
+    "sp500": [g for g in TICKER_LISTS if g.startswith("SP500")],
+    "casino": ["CASINOS_GAMING"], "casinos": ["CASINOS_GAMING"], "gambling": ["CASINOS_GAMING"],
+    "gluecksspiel": ["CASINOS_GAMING"], "glucksspiel": ["CASINOS_GAMING"], "gaming": ["CASINOS_GAMING"],
+    "macau": ["CASINOS_GAMING"], "macao": ["CASINOS_GAMING"], "vegas": ["CASINOS_GAMING"],
+    "hotel": ["HOTELS_LODGING"], "hotels": ["HOTELS_LODGING"], "lodging": ["HOTELS_LODGING"],
+    "kreuzfahrt": ["CRUISE_LINES"], "kreuzfahrten": ["CRUISE_LINES"], "cruise": ["CRUISE_LINES"],
+    "cruises": ["CRUISE_LINES"],
+    "leasing": ["LEASING_TRANSPORT_EQUIPMENT"], "flugzeugleasing": ["LEASING_TRANSPORT_EQUIPMENT"],
+    "aircraft": ["LEASING_TRANSPORT_EQUIPMENT"], "vermietung": ["LEASING_TRANSPORT_EQUIPMENT"],
+    "schifffahrt": ["SHIPPING_TANKERS_BULK"], "schiffahrt": ["SHIPPING_TANKERS_BULK"],
+    "shipping": ["SHIPPING_TANKERS_BULK"], "tanker": ["SHIPPING_TANKERS_BULK"], "reederei": ["SHIPPING_TANKERS_BULK"],
+    "reedereien": ["SHIPPING_TANKERS_BULK"], "schiffe": ["SHIPPING_TANKERS_BULK"],
+}
 
-    results.sort(key=lambda x: (x[0], x[1]))
-    return [r[2] for r in results[:max_results]]
+
+# ── Index (einmal aufbauen, pro Ticker-Liste zwischenspeichern) ─────────────────────────────────
+class _Entry:
+    __slots__ = ("ticker", "base", "raw", "aliases", "ngroups", "focus")
+
+
+@lru_cache(maxsize=4)
+def _build_index(all_tickers: tuple):
+    meta = _load_meta()
+    ngroups: dict[str, int] = {}
+    for lst in TICKER_LISTS.values():
+        for t in lst:
+            ngroups[t] = ngroups.get(t, 0) + 1
+
+    entries, isin_map, wkn_map = [], {}, {}
+    for t in all_tickers:
+        e = _Entry()
+        e.ticker, e.raw = t, t.lower()
+        e.base = t.split(".")[0].lower()
+        names = list(TICKER_NAMES.get(t, []))
+        m = meta.get(t, {})
+        for extra in (m.get("name"), m.get("long_name")):
+            if extra and extra not in names:
+                names.append(extra)
+        if not names:
+            names = [t]
+        e.aliases = []
+        for a in names:
+            n = _norm(a)
+            if n:
+                e.aliases.append((n, n.replace(" ", ""), n.split()))
+        e.ngroups = ngroups.get(t, 0)
+        e.focus = _tokenize(get_focus(t))
+        entries.append(e)
+        if m.get("isin"):
+            isin_map[m["isin"].upper()] = t
+    present = set(all_tickers)
+    for isin, t in _ISIN_SEED.items():
+        if _isin_valid(isin) and t in present:
+            isin_map.setdefault(isin, t)
+    for isin, t in isin_map.items():                 # WKN steckt bei deutschen ISIN in Stelle 6-11
+        if isin.startswith("DE") and len(isin) == 12:
+            wkn_map[isin[5:11]] = t
+
+    group_index = []                                  # (Gruppenschlüssel, Tokens aus Schlüssel + deutschem Label)
+    for g in TICKER_LISTS:
+        toks = set(_tokenize(g.replace("_", " "))) | set(_tokenize(get_group_label(g)))
+        group_index.append((g, toks))
+    return entries, isin_map, wkn_map, group_index, present
+
+
+def _matching_groups(q: str, qtoks: list[str], group_index) -> dict[str, int]:
+    """Gruppe -> Basis-Score. Exaktes Synonym (z. B. 'uran', 'ki') stark, Treffer im Gruppen-Label mittel."""
+    found: dict[str, int] = {}
+    for key in (q, q.replace(" ", "")) + tuple(qtoks):
+        for g in GROUP_SYNONYMS.get(key, []):
+            if g in TICKER_LISTS:
+                found[g] = 78
+    long_toks = [qt for qt in qtoks if len(qt) >= 3]
+    if long_toks:
+        for g, toks in group_index:
+            if g not in found and all(any(t.startswith(qt) for t in toks) for qt in long_toks):
+                found[g] = 66
+    return found
+
+
+# ── Label ───────────────────────────────────────────────────────────────────────────────────
+def _display_name(t: str) -> str:
+    names = TICKER_NAMES.get(t)
+    if names:
+        return names[0]
+    return get_meta(t).get("name") or t
+
+
+def _label(t: str) -> str:
+    focus = get_focus(t)
+    extra = f" · {focus}" if focus else ""
+    return f"{t}{SEP}{_display_name(t)} · {get_exchange(t)} {get_currency(t)}{extra}"
 
 
 def label_to_ticker(label: str) -> str:
-    """Extrahiert den Ticker aus 'ALV.DE — Allianz' → 'ALV.DE'"""
-    return label.split(" — ")[0].strip()
+    return label.split(SEP)[0].strip()
 
 
 def get_display_name(ticker: str) -> str:
-    """'ALV.DE' → 'ALV.DE — Allianz'"""
-    names = TICKER_NAMES.get(ticker, [])
-    return f"{ticker} — {names[0]}" if names else ticker
+    return _label(ticker)
+
+
+# ── Suche ───────────────────────────────────────────────────────────────────────────────────
+_TICKER_LIKE = re.compile(r"^[A-Za-z0-9\-\^=]{1,12}(\.[A-Za-z]{1,3})?$")
+
+
+def search_ticker(query: str, all_tickers: list[str], max_results: int = 12) -> list[str]:
+    qraw = (query or "").strip()
+    if not qraw:
+        return []
+    entries, isin_map, wkn_map, group_index, present = _build_index(tuple(all_tickers))
+    ql = qraw.lower()
+    q = _norm(qraw)
+    qc = q.replace(" ", "")
+    qtoks = q.split()
+    scores: dict[str, float] = {}
+
+    def bump(t, s):
+        if s > scores.get(t, 0):
+            scores[t] = s
+
+    # 1) ISIN / WKN
+    up = qraw.upper().replace(" ", "")
+    if up in isin_map:
+        bump(isin_map[up], 100)
+    if len(up) == 6 and up in wkn_map:
+        bump(wkn_map[up], 98)
+
+    # 2) ADR -> Heimatbörse
+    for adr, home in ADR_ALIASES.items():
+        if adr.lower() == ql and home in present:
+            bump(home, 99)
+
+    # 3) Ticker, Name, Zusammenschreibung
+    for e in entries:
+        s = 0.0
+        if ql == e.raw:
+            s = 100
+        elif ql == e.base:
+            s = 94
+        elif e.raw.startswith(ql) or (len(ql) >= 2 and e.base.startswith(ql)):
+            s = 86 - min(len(e.base) - len(ql), 6) * 0.5
+        if q:
+            for n, nc, toks in e.aliases:
+                if n == q or nc == qc:
+                    s = max(s, 92)
+                elif n.startswith(q) or (len(qc) >= 3 and nc.startswith(qc)):
+                    s = max(s, 82)
+                elif all(any(t.startswith(qt) for t in toks) for qt in qtoks):
+                    s = max(s, 74)
+                elif len(qc) >= 4 and qc in nc:
+                    s = max(s, 58)
+        if q and e.focus and len(qc) >= 3 and all(any(t.startswith(qt) for t in e.focus) for qt in qtoks):
+            s = max(s, 80)                         # Fokus-Hinweis (z. B. "Silber", "Kupfer", "Uran") trifft
+        if s:
+            bump(e.ticker, s + min(e.ngroups, 6) * 0.3)
+
+    # 4) Thema / Sektor / Index
+    if len(qc) >= 2:
+        member_of: dict[str, list[int]] = {}
+        for g, base in _matching_groups(q, qtoks, group_index).items():
+            for t in TICKER_LISTS[g]:
+                member_of.setdefault(t, []).append(base)
+        ng = {e.ticker: e.ngroups for e in entries}
+        for t, bases in member_of.items():
+            if t in present:
+                bump(t, max(bases) + min(len(bases) - 1, 3) + min(ng.get(t, 0), 6) * 0.3)
+
+    # 5) Tippfehler (nur wenn nichts Gutes gefunden wurde)
+    if len(qc) >= 4 and (not scores or max(scores.values()) < 70):
+        for e in entries:
+            best = 0.0
+            for n, nc, toks in e.aliases:
+                for cand in {nc, nc[:len(qc) + 1], *(t for t in toks if len(t) >= 4)}:
+                    sm = difflib.SequenceMatcher(None, qc, cand)
+                    if sm.real_quick_ratio() < 0.7 or sm.quick_ratio() < 0.7:
+                        continue
+                    best = max(best, sm.ratio())
+            if len(e.base) >= 3:
+                best = max(best, difflib.SequenceMatcher(None, ql, e.base).ratio())
+            if best >= 0.78:
+                bump(e.ticker, 40 + 30 * best)
+
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    labels = [_label(t) for t, _ in ranked[:max_results]]
+
+    # 6) Freie Yahoo-Eingabe, wenn nichts Brauchbares gefunden wurde
+    if (not ranked or ranked[0][1] < 60) and _TICKER_LIKE.match(qraw):
+        free = qraw.upper()
+        if free not in scores:
+            labels.append(f"{free}{SEP}nicht in der Liste · direkt bei Yahoo abfragen ({get_exchange(free)})")
+    return labels[:max_results]

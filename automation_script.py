@@ -16,6 +16,7 @@ import pandas as pd
 
 from database import (get_tickers_by_region, get_groups_for_ticker, TICKER_LISTS, REGION_LABELS)
 from engine import scan_tickers, send_mail_report
+from signal_journal import append_signals
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 log = logging.getLogger(__name__)
@@ -82,7 +83,8 @@ def run_automation(region: str | None = None, force: bool = False, now_utc: date
     results, failed, stale, meta = scan_tickers(tickers, now_utc=now_utc)
     log.info(f"Fertig — analysiert: {len(results)}, veraltet: {len(stale)}, Fehler: {len(failed)}, Daten bis: {meta['ref_date']}")
     if failed:
-        log.info("Fehlgeschlagen: " + ", ".join(list(failed)[:30]) + (" …" if len(failed) > 30 else ""))
+        for t, why in sorted(failed.items()):
+            log.info(f"  Fehler {t}: {why}")
 
     reason = skip_reason(region, meta["ref_date"], now_utc)
     if reason and not force:
@@ -103,6 +105,14 @@ def run_automation(region: str | None = None, force: bool = False, now_utc: date
         region_label=label, failed_list=sorted(failed), stale_count=len(stale), data_date=meta["ref_date"],
     )
     log.info(status)
+
+    # Signal-Journal: echte Mail-Signale für die spätere Live-Auswertung festhalten (darf die Mail nie gefährden)
+    try:
+        n = append_signals(results, meta["ref_date"], label, now_utc=now_utc)
+        log.info(f"Journal: {n} neue Einträge")
+    except Exception as e:
+        log.warning(f"Journal nicht geschrieben: {e}")
+
     if status.startswith("❌"):
         sys.exit(1)
 
