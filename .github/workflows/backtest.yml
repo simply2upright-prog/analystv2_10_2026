@@ -12,6 +12,11 @@ on:
         description: 'Nur die ersten N Ticker (0 = alle; zum Testen z. B. 100)'
         type: string
         default: '0'
+      mode:
+        description: 'Was rechnen? both = Backtest + Parameter-Sweep, pooled = nur Backtest, sweep = nur Sweep'
+        type: choice
+        options: [both, pooled, sweep]
+        default: both
 
 permissions:
   contents: write
@@ -32,7 +37,11 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Gepoolter Backtest
+        if: ${{ inputs.mode != 'sweep' }}
         run: python pooled_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out backtest_results
+      - name: Parameter-Sweep (Training/Test)
+        if: ${{ inputs.mode != 'pooled' }}
+        run: python sweep_backtest.py --period "${{ inputs.period || '10y' }}" --limit "${{ inputs.limit || '0' }}" --out sweep_results
       - name: Journal nachtragen und auswerten
         run: python signal_journal.py --evaluate
       - uses: actions/upload-artifact@v4
@@ -40,12 +49,13 @@ jobs:
           name: backtest-ergebnisse
           path: |
             backtest_results/
+            sweep_results/
             journal_report.md
       - name: Ergebnisse committen
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backtest_results signal_journal.csv journal_report.md 2>/dev/null || true
+          git add backtest_results sweep_results signal_journal.csv journal_report.md 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Keine Änderungen."
           else
