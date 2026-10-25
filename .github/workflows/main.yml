@@ -15,6 +15,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write              # signal_journal.csv zurück ins Repo schreiben
+
 concurrency:
   group: daily-scan
   cancel-in-progress: false
@@ -36,3 +39,16 @@ jobs:
           SCAN_REGION: ${{ github.event_name == 'workflow_dispatch' && inputs.region || (github.event.schedule == '45 17 * * 1-5' && 'eu_asia' || 'us') }}
           SCAN_FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || 'false' }}
         run: python automation_script.py
+      - name: Journal speichern
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add signal_journal.csv 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Keine Journal-Änderungen."
+          else
+            git commit -m "Signal-Journal $(date -u +%F)"
+            git pull --rebase --autostash
+            git push
+          fi
