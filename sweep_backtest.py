@@ -66,6 +66,7 @@ class Variant:
     recent_days: int = 10            # Fenster für 'recent'
     gate: bool = True                # False = kein Oszillator-Extrem nötig, jeder OsMA-Dreh ist ein Signal
     osma_zero: bool = False          # nur Dreh unter der Nulllinie (Kauf) bzw. über der Nulllinie (Verkauf)
+    cci_th: float = -100.0           # Kauf: CCI > cci_th, Verkauf: CCI < -cci_th (Basis -100; +100 = CCI muss schon klar im Plus sein)
     confirm_bars: int = 1            # MACD-Dreh gilt erst, wenn das Histogramm so viele Balken in Folge in Signalrichtung läuft
 
 
@@ -101,6 +102,14 @@ VARIANTS = [
             all4="window", confirm="none", max_wait=0, turn_lookback=1, recent_days=10),
     Variant("V22", "4 Kriterien innerhalb 20 Tagen (zeitlich versetzt)", "wie V21 mit 20 Tagen Fenster",
             all4="window", confirm="none", max_wait=0, turn_lookback=1, recent_days=20),
+    Variant("V23", "Extrem vorausgehend (5 T.), dann CCI + OsMA-Dreh", "Deine Regel wörtlich: StochRSI~0 UND Stoch im Bereich vor einigen Tagen; heute CCI>-100 und OsMA dreht",
+            all4="prior", confirm="none", max_wait=0, turn_lookback=1, recent_days=5),
+    Variant("V24", "Extrem vorausgehend (10 T.), dann CCI + OsMA-Dreh", "wie V23 mit 10 Tagen",
+            all4="prior", confirm="none", max_wait=0, turn_lookback=1, recent_days=10),
+    Variant("V25", "wie V24, CCI > +100 (Kauf) / < -100 (Verkauf)", "Falls du CCI über +100 gemeint hast",
+            all4="prior", confirm="none", max_wait=0, turn_lookback=1, recent_days=10, cci_th=100.0),
+    Variant("V26", "V20 mit CCI > +100", "StochRSI-Extrem in 10 T., Stoch/CCI(+100)/OsMA am selben Tag",
+            all4="recent", confirm="none", max_wait=0, turn_lookback=1, cci_th=100.0),
     Variant("V11", "V1 + V2 + V6", "Kombination der drei begründeten Filter",
             confirm="price", sell_down_only=True, min_price=5.0),
     Variant("V12", "V1 + V3 + V6", "wie V11, aber 3 % Preis-Bestätigung",
@@ -234,13 +243,15 @@ def all4_gate(P, v: Variant, buy: bool) -> np.ndarray:
     tmp = P.turn1 if v.turn_lookback == 1 else P.turn
     with np.errstate(invalid="ignore"):
         if buy:
-            sr_day, st_day, cci_ok = (P.sr > 0) & (P.sr < v.rsi_th), (P.sf < 10) & (P.ss < 15), P.cci > -100
+            sr_day, st_day, cci_ok = (P.sr > 0) & (P.sr < v.rsi_th), (P.sf < 10) & (P.ss < 15), P.cci > v.cci_th
         else:
-            sr_day, st_day, cci_ok = P.sr > 1 - v.rsi_th, (P.sf > 90) & (P.ss > 85), P.cci < 100
+            sr_day, st_day, cci_ok = P.sr > 1 - v.rsi_th, (P.sf > 90) & (P.ss > 85), P.cci < -v.cci_th
     turn_day = tmp == (1 if buy else -1)
     n = v.recent_days
     if v.all4 == "same":
         return turn_day & sr_day & st_day & cci_ok
+    if v.all4 == "prior":   # StochRSI-Extrem UND Stoch im Bereich zusammen an einem Tag der letzten N Tage; heute CCI + OsMA-Dreh
+        return turn_day & cci_ok & _any_recent(sr_day & st_day, n)
     if v.all4 == "recent":
         return turn_day & st_day & cci_ok & _any_recent(sr_day, n)
     all_on = _any_recent(sr_day, n) & _any_recent(st_day, n) & _any_recent(turn_day, n) & cci_ok
