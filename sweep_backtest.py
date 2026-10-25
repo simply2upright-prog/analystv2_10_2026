@@ -62,6 +62,10 @@ class Variant:
     macd_alt: bool = False           # MACD(12,26,9) statt (70,200,9)
     max_wait: int = MAX_ENTRY_WAIT   # so lange (Handelstage) wird nach Beginn der Extrem-Phase auf die Bestätigung gewartet
     turn_lookback: int = 3           # so viele fallende Balken vor dem Dreh (Basis 3; 1 = schon ein fallender Balken genügt)
+    all4: str = ""                   # "same" = alle 4 Kriterien am selben Tag (Mail-Definition) | "recent" = StochRSI-Extrem in den letzten Tagen
+    recent_days: int = 10            # Fenster für 'recent'
+    gate: bool = True                # False = kein Oszillator-Extrem nötig, jeder OsMA-Dreh ist ein Signal
+    osma_zero: bool = False          # nur Dreh unter der Nulllinie (Kauf) bzw. über der Nulllinie (Verkauf)
     confirm_bars: int = 1            # MACD-Dreh gilt erst, wenn das Histogramm so viele Balken in Folge in Signalrichtung läuft
 
 
@@ -85,6 +89,18 @@ VARIANTS = [
             confirm="macd", max_wait=60, confirm_bars=3),
     Variant("V16", "Nur MACD, 1 fallender Balken genügt", "Dein Dreh: fallend -> steigend, ohne 3 Balken Vorlauf",
             confirm="macd", max_wait=60, turn_lookback=1),
+    Variant("V17", "Reiner OsMA-Dreh (ohne Extrem-Filter)", "Deine Regel: fallend -> steigend, Einstieg am Folgetag, kein Oszillator-Extrem nötig",
+            gate=False, confirm="macd", max_wait=0, turn_lookback=1),
+    Variant("V18", "Reiner OsMA-Dreh unter/über Null", "Wie V17, aber Kauf nur bei OsMA < 0, Verkauf nur bei OsMA > 0 (Dreh gegen den Trend)",
+            gate=False, confirm="macd", max_wait=0, turn_lookback=1, osma_zero=True),
+    Variant("V19", "Alle 4 Kriterien am selben Tag (= KAUFSIGNAL der Mail)", "StochRSI<0,1, Stoch F<10 & S<15, CCI>-100, MACD-Dreh am selben Tag; Einstieg Folgetag",
+            all4="same", confirm="none", max_wait=0),
+    Variant("V20", "4 Kriterien, StochRSI-Extrem vorausgehend (10 T.)", "Deine Regel: StochRSI war zuletzt extrem; am Dreh-Tag Stoch im Bereich, CCI>-100, OsMA dreht",
+            all4="recent", confirm="none", max_wait=0, turn_lookback=1),
+    Variant("V21", "4 Kriterien innerhalb 10 Tagen (zeitlich versetzt)", "Deine Regel: StochRSI-Extrem, Stoch im Bereich und OsMA-Dreh je irgendwann in den letzten 10 Tagen, CCI > -100 heute",
+            all4="window", confirm="none", max_wait=0, turn_lookback=1, recent_days=10),
+    Variant("V22", "4 Kriterien innerhalb 20 Tagen (zeitlich versetzt)", "wie V21 mit 20 Tagen Fenster",
+            all4="window", confirm="none", max_wait=0, turn_lookback=1, recent_days=20),
     Variant("V11", "V1 + V2 + V6", "Kombination der drei begründeten Filter",
             confirm="price", sell_down_only=True, min_price=5.0),
     Variant("V12", "V1 + V3 + V6", "wie V11, aber 3 % Preis-Bestätigung",
@@ -118,7 +134,7 @@ def prepare(ticker: str, raw: pd.DataFrame, fwd: int = FORWARD_DAYS) -> SimpleNa
     return SimpleNamespace(
         ticker=ticker, n=n, c=c, o=o, h=df["High"].to_numpy(float), l=df["Low"].to_numpy(float), ma=ma, valid=arr["valid"], turn=arr["turn"], turn1=macd_turn_series(df["OSMA"].to_numpy(float), 1), turn_alt=macd_turn_series(alt),
         osma=df["OSMA"].to_numpy(float), osma_alt=alt,
-        sr=df["StochRSI_70"].to_numpy(float), sf=df["Stoch_Fast"].to_numpy(float), ss=df["Stoch_Slow"].to_numpy(float),
+        cci=df["CCI_20"].to_numpy(float), sr=df["StochRSI_70"].to_numpy(float), sf=df["Stoch_Fast"].to_numpy(float), ss=df["Stoch_Slow"].to_numpy(float),
         sig=pd.Series(c).pct_change().rolling(60).std().to_numpy(),
         q=(idx.year * 4 + (idx.month - 1) // 3).to_numpy(), dates=idx.to_numpy("datetime64[ns]"), aw=aw,
         us=get_region(ticker) == "us", n_anom=int(aw.sum()))
@@ -199,12 +215,53 @@ def make_lookup(T: dict, M: Market):
 # ─────────────────────────────────────────────────────────────────────────────
 # Signale einer Variante (Mechanik = engine.find_entry_signals, parametrisiert)
 # ─────────────────────────────────────────────────────────────────────────────
+def _any_recent(b: np.ndarray, n: int) -> np.ndarray:
+    """True, wenn b in den letzten n Tagen (inkl. heute) mindestens einmal True war."""
+    c = np.cumsum(b.astype(int))
+    w = c.copy()
+    w[n:] = c[n:] - c[:-n]
+    return w > 0
+
+
+def all4_gate(P, v: Variant, buy: bool) -> np.ndarray:
+    """
+    Strenge Regel "alle 4 Kriterien" (Kauf; Verkauf gespiegelt):
+      same   = alle am selben Tag (= KAUFSIGNAL der Mail)
+      recent = StochRSI-Extrem war in den letzten N Tagen; Stoch (F<10 & S<15), CCI > -100 und MACD-Dreh am selben Tag
+      window = JEDES Kriterium war in den letzten N Tagen mindestens einmal erfüllt (StochRSI, Stoch, MACD-Dreh); CCI heute;
+               Signal = erster Tag, an dem alle zusammen gelten (die Kriterien dürfen zeitlich versetzt kommen)
+    """
+    tmp = P.turn1 if v.turn_lookback == 1 else P.turn
+    with np.errstate(invalid="ignore"):
+        if buy:
+            sr_day, st_day, cci_ok = (P.sr > 0) & (P.sr < v.rsi_th), (P.sf < 10) & (P.ss < 15), P.cci > -100
+        else:
+            sr_day, st_day, cci_ok = P.sr > 1 - v.rsi_th, (P.sf > 90) & (P.ss > 85), P.cci < 100
+    turn_day = tmp == (1 if buy else -1)
+    n = v.recent_days
+    if v.all4 == "same":
+        return turn_day & sr_day & st_day & cci_ok
+    if v.all4 == "recent":
+        return turn_day & st_day & cci_ok & _any_recent(sr_day, n)
+    all_on = _any_recent(sr_day, n) & _any_recent(st_day, n) & _any_recent(turn_day, n) & cci_ok
+    prev = np.zeros_like(all_on)
+    prev[1:] = all_on[:-1]
+    return all_on & ~prev
+
+
 def gen_trades(P, v: Variant, side: str, lookup, fwd: int = FORWARD_DAYS, k: float = VOL_K) -> list[tuple]:
     n, c, o, ma = P.n, P.c, P.o, P.ma
     buy = side == "buy"
     with np.errstate(invalid="ignore"):
         gate = ((P.sr > 0) & (P.sr < v.rsi_th) & (P.sf < 10) & (P.ss < 15)) if buy else \
                ((P.sr > 1 - v.rsi_th) & (P.sf > 90) & (P.ss > 85))
+    if v.all4:            # strenge Regel: Oszillatoren + CCI + OsMA-Dreh, siehe all4_gate()
+        gate = all4_gate(P, v, buy)
+    elif not v.gate:        # reiner OsMA-Dreh: jeder Tag mit Dreh ist ein Signal (Cooldown verhindert Dubletten)
+        tmp = P.turn_alt if v.macd_alt else (P.turn1 if v.turn_lookback == 1 else P.turn)
+        o_ = P.osma_alt if v.macd_alt else P.osma
+        with np.errstate(invalid="ignore"):
+            gate = (tmp == (1 if buy else -1)) & ((o_ < 0) if (buy and v.osma_zero) else ((o_ > 0) if ((not buy) and v.osma_zero) else True))
     idx = np.flatnonzero(gate & P.valid)
     events, prev = [], -10 ** 9
     for i in idx:
@@ -224,6 +281,9 @@ def gen_trades(P, v: Variant, side: str, lookup, fwd: int = FORWARD_DAYS, k: flo
                 ext = l[j] if ext is None else min(ext, l[j])
             else:
                 ext = h[j] if ext is None else max(ext, h[j])
+            if v.confirm == "none":
+                trigger, j_entry = "Kriterien", j
+                break
             if v.confirm in ("either", "macd") and turn[j] == tdir:
                 jj = j + v.confirm_bars - 1
                 if jj < n - 1 and all((osma[j + m] > osma[j + m - 1]) if buy else (osma[j + m] < osma[j + m - 1])
