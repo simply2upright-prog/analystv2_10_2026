@@ -91,6 +91,11 @@ def ticker_trades(ticker: str, raw: pd.DataFrame, fwd: int = FORWARD_DAYS) -> li
             win = close[start:start + fwd]
             if len(win) < fwd or not d["entry_price"]:
                 continue
+            seg = close[max(start - 1, 0):start + fwd]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                step = seg[1:] / seg[:-1]
+            if np.any((step > 2.0) | (step < 0.4)):      # Datenfehler (z. B. CHRD 2020: +37.250 %) - nicht werten
+                continue
             r = (win[-1] / d["entry_price"] - 1) * 100
             rows.append({
                 "ticker": ticker, "region": get_region(ticker), "side": side,
@@ -151,6 +156,7 @@ def summarize(df: pd.DataFrame) -> dict:
         "t_cluster": t_hit, "p_cluster": p_two_sided(t_hit), "n_months": m,
         "ret_mean": float(df["ret40_pct"].mean()), "ret_median": float(df["ret40_pct"].median()),
         "ret_base": float(df["base_ret40_pct"].mean()), "ret_excess": float(excess.mean()),
+        "ret_excess_median": float(excess.median()), "ret_excess_wins": float(excess.clip(-50, 50).mean()),
         "t_ret_cluster": t_ret, "p_ret_cluster": p_two_sided(t_ret),
         "avg_fav": float(df["fav_pct"].mean()), "avg_adv": float(df["adv_pct"].mean()),
         "n_tickers": int(df["ticker"].nunique()),
@@ -172,16 +178,16 @@ def verdict(s: dict) -> str:
 
 def fmt_row(label: str, s: dict) -> str:
     if s.get("n", 0) == 0:
-        return f"| {label} | 0 | | | | | | | |"
+        return f"| {label} | 0 | | | | | | | | |"
     pc = s["p_cluster"]
     p_txt = "–" if not np.isfinite(pc) else ("<0,001" if pc < 0.001 else f"{pc:.3f}")
     return (f"| {label} | {s['n']} | {s['rate']*100:.1f} % ({s['ci_lo']*100:.0f}–{s['ci_hi']*100:.0f}) | "
             f"{s['baseline']*100:.1f} % | {s['edge']*100:+.1f} PP | "
-            f"{p_txt} | {s['ret_mean']:+.1f} % | {s['ret_excess']:+.1f} PP | {verdict(s)} |")
+            f"{p_txt} | {s['ret_mean']:+.1f} % | {s['ret_excess']:+.1f} PP | {s['ret_excess_median']:+.1f} PP | {verdict(s)} |")
 
 
-TABLE_HEAD = ("| Gruppe | n | Trefferquote (95 %-KI) | Zufall | Edge | p (Cluster) | Ø Rendite 40 T. | Rendite vs. Zufall | Urteil |\n"
-              "|---|---|---|---|---|---|---|---|---|")
+TABLE_HEAD = ("| Gruppe | n | Trefferquote (95 %-KI) | Zufall | Edge | p (Cluster) | Ø Rendite 40 T. | Rendite vs. Zufall (Ø) | Rendite vs. Zufall (Median) | Urteil |\n"
+              "|---|---|---|---|---|---|---|---|---|---|")
 
 
 def build_report(trades: pd.DataFrame, meta: dict) -> tuple[str, dict]:
@@ -223,7 +229,10 @@ def build_report(trades: pd.DataFrame, meta: dict) -> tuple[str, dict]:
         "- **Mehrfachtests:** Die Tabellen enthalten ~20 Einzeltests; bei α = 5 % ist im Schnitt einer rein zufällig „signifikant“. "
         "Einzelne Treffer in Untergruppen nur glauben, wenn sie in der Jahres-Tabelle und in beiden Regionen wiederkehren.\n"
         "- **Verkauf** = Kurs fällt ≥ 5 %: ein Abwärts-Signal, kein Short-Backtest mit Kosten.\n"
-        "- Die Jahres-Tabelle zeigt, ob ein Edge in allen Jahren da ist oder nur in einem (z. B. 2022 oder Erholung 2023).\n")
+        "- Die Jahres-Tabelle zeigt, ob ein Edge in allen Jahren da ist oder nur in einem. ACHTUNG: Der Zufallsvergleich hier ist "
+        "der 10-Jahres-Schnitt des Tickers, nicht jahresgleich – in Haussejahren (2017, 2019) sieht Verkauf dadurch künstlich "
+        "schlecht aus, in Crash-/Vola-Jahren alles besser. Jahresgleiche Werte liefert `sweep_backtest.py` (SWEEP_REPORT.md).\n"
+        "- Signale mit Kurssprüngen > +100 % / < -60 % im Fenster (Datenfehler) werden nicht gewertet.\n")
     out.append("\n## Grenzen dieser Auswertung\n")
     out.append(
         "- **Survivorship-Bias:** Die Liste enthält die Ticker von HEUTE. Firmen, die zwischenzeitlich abstürzten oder "

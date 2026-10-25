@@ -87,7 +87,7 @@ TICKER_LISTS = {
     ],
     "SDAX": [
         "1U1.DE", "GBF.DE", "BVB.DE", "CEC.DE", "DWNI.DE", "FIE.DE", "FRA.DE", "FNTN.DE", "GFT.DE",
-        "HHFA.DE", "HLAG.DE", "HDD.DE", "IVU.DE", "JEN.DE", "JST.DE", "KCO.DE", "KWS.DE", "MLP.DE", "PBB.DE",
+        "HHFA.DE", "HLAG.DE", "HDD.DE", "IVU.DE", "JEN.DE", "JST.DE", "KWS.DE", "MLP.DE", "PBB.DE",
         "PNE3.DE", "PSM.DE", "QIA.DE", "SDF.DE", "TEG.DE", "TTK.DE", "WUW.DE", "TUI1.DE", "LXS.DE",
     ],
     "CAC40": [
@@ -180,7 +180,7 @@ TICKER_LISTS = {
         "JPM", "BAC", "V", "MA", "AXP", "BLK", "MS", "GS", "HSBA.L", "STAN.L", "LLOY.L", "BARC.L", "BNP.PA",
         "SAN.MC", "BBVA.MC", "UCG.MI", "ISP.MI", "DBK.DE", "CBK.DE", "ADYEN.AS", "8306.T", "8411.T",
         "105560.KS", "055550.KS", "0939.HK", "1398.HK", "CATY", "EWBC", "FFIN", "FNB", "FRME", "HOMB",
-        "INDB", "UBSI", "UCBI", "UMBF", "WSBC", "WSFS", "WTFC", "BANF", "CBC", "CHCO", "CLBK", "BKU", "BOH",
+        "INDB", "UBSI", "UMBF", "WSBC", "WSFS", "WTFC", "BANF", "CBC", "CHCO", "CLBK", "BKU", "BOH",
         "PB",
     ],
     "CONSUMER_STAPLES": [
@@ -234,7 +234,7 @@ TICKER_LISTS = {
         "CARL-B.CO", "TAP", "MDLZ", "HSY", "NESN.SW", "LISN.SW", "MNST", "CELH", "KDP", "CPR.MI", "DGE.L",
     ],
     "MEDIA_ENTERTAINMENT": [
-        "DIS", "UMG.AS", "NFLX", "WPP.L", "SPOT", "EA", "TTWO", "WBD",
+        "DIS", "UMG.AS", "NFLX", "WPP.L", "SPOT", "TTWO",
     ],
     "CHINA_FINANCE_ENERGY_TELECOM": [
         "0939.HK", "1398.HK", "3988.HK", "0941.HK", "0728.HK", "0762.HK", "2628.HK", "0386.HK", "0857.HK",
@@ -287,8 +287,7 @@ TICKER_LISTS = {
     "CRUISE_LINES": [
         "CCL", "RCL", "NCLH",
     ],
-    "LEASING_TRANSPORT_EQUIPMENT": [
-        "AL", "AER", "FTAI", "GATX", "TRN", "R", "URI", "CAR",
+    "LEASING_TRANSPORT_EQUIPMENT": [ "AER", "FTAI", "GATX", "TRN", "R", "URI", "CAR",
     ],
     "SHIPPING_TANKERS_BULK": [
         "DHT", "INSW", "TNK", "TRMD", "STNG", "FRO", "GOGL", "GSL", "SBLK", "ESEA", "TK",
