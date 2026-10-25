@@ -67,6 +67,7 @@ class Variant:
     gate: bool = True                # False = kein Oszillator-Extrem nötig, jeder OsMA-Dreh ist ein Signal
     osma_zero: bool = False          # nur Dreh unter der Nulllinie (Kauf) bzw. über der Nulllinie (Verkauf)
     cci_th: float = -100.0           # Kauf: CCI > cci_th, Verkauf: CCI < -cci_th (Basis -100; +100 = CCI muss schon klar im Plus sein)
+    elder: str = ""                  # "fi" | "stoch" | "impulse" | "zero": Elder-Triple-Screen-Varianten (siehe elder_gate)
     confirm_bars: int = 1            # MACD-Dreh gilt erst, wenn das Histogramm so viele Balken in Folge in Signalrichtung läuft
 
 
@@ -110,6 +111,14 @@ VARIANTS = [
             all4="prior", confirm="none", max_wait=0, turn_lookback=1, recent_days=10, cci_th=100.0),
     Variant("V26", "V20 mit CCI > +100", "StochRSI-Extrem in 10 T., Stoch/CCI(+100)/OsMA am selben Tag",
             all4="recent", confirm="none", max_wait=0, turn_lookback=1, cci_th=100.0),
+    Variant("E1", "Triple Screen: Wochentrend + Force Index", "Elder Kap. 39: Wochen-EMA(13) steigt (Screen 1), 2-Tage-Force-Index fällt unter 0 (Screen 2); Verkauf gespiegelt. Einstieg Folgetag-Open statt Stop-Order",
+            elder="fi", confirm="none", max_wait=0),
+    Variant("E2", "Triple Screen: Wochen-MACD-H + Stochastik < 30", "Elder Kap. 39: Wochen-MACD-Histogramm steigt, Tages-Stochastik(14) < 30 (Verkauf > 70)",
+            elder="stoch", confirm="none", max_wait=0),
+    Variant("E3", "Impuls: Rot verschwindet (Tag), Woche nicht rot", "Elder Kap. 40: Kauf direkt nach dem Verschwinden der roten Farbe, wenn der Wochen-Impuls nicht rot ist (Verkauf: Grün verschwindet, Woche nicht grün)",
+            elder="impulse", confirm="none", max_wait=0),
+    Variant("E4", "Wochen-MACD-H unter 0 steigend + Stochastik < 30", "Elder: beste Kaufsignale, wenn das Wochen-Histogramm UNTER der Nulllinie nach oben dreht (Verkauf: über 0 nach unten) + Tages-Stochastik",
+            elder="zero", confirm="none", max_wait=0),
     Variant("V11", "V1 + V2 + V6", "Kombination der drei begründeten Filter",
             confirm="price", sell_down_only=True, min_price=5.0),
     Variant("V12", "V1 + V3 + V6", "wie V11, aber 3 % Preis-Bestätigung",
@@ -140,7 +149,8 @@ def prepare(ticker: str, raw: pd.DataFrame, fwd: int = FORWARD_DAYS) -> SimpleNa
     aw = (cs[end] - np.where(s > 0, cs[s - 1], 0)) > 0          # Datenfehler in den Tagen s .. s+fwd-1
     alt = compute_macd(df[["Close"]].copy(), fast=12, slow=26, signal=9)["OSMA"].to_numpy(float)
     idx = df.index
-    return SimpleNamespace(
+    E = _elder_arrays(df, c, alt)
+    return SimpleNamespace(elder=E, 
         ticker=ticker, n=n, c=c, o=o, h=df["High"].to_numpy(float), l=df["Low"].to_numpy(float), ma=ma, valid=arr["valid"], turn=arr["turn"], turn1=macd_turn_series(df["OSMA"].to_numpy(float), 1), turn_alt=macd_turn_series(alt),
         osma=df["OSMA"].to_numpy(float), osma_alt=alt,
         cci=df["CCI_20"].to_numpy(float), sr=df["StochRSI_70"].to_numpy(float), sf=df["Stoch_Fast"].to_numpy(float), ss=df["Stoch_Slow"].to_numpy(float),
@@ -260,13 +270,69 @@ def all4_gate(P, v: Variant, buy: bool) -> np.ndarray:
     return all_on & ~prev
 
 
+
+def _ema(a: np.ndarray, span: int) -> np.ndarray:
+    return pd.Series(a).ewm(span=span, adjust=False).mean().to_numpy()
+
+
+def _elder_arrays(df: pd.DataFrame, c: np.ndarray, osma_d: np.ndarray) -> dict:
+    """Größen für Elders Triple Screen / Impuls-System. Wochenwerte = letzte ABGESCHLOSSENE Woche (kein Vorgriff)."""
+    idx = df.index
+    vol = df["Volume"].to_numpy(float) if "Volume" in df.columns else np.zeros(len(df))
+    d1 = np.r_[np.nan, np.diff(c)]
+    fi2 = _ema(np.nan_to_num(d1 * vol), 2)
+    lo = pd.Series(df["Low"].to_numpy(float)).rolling(14).min().to_numpy()
+    hi = pd.Series(df["High"].to_numpy(float)).rolling(14).max().to_numpy()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        st14 = (c - lo) / (hi - lo) * 100
+    ema13 = _ema(c, 13)
+    # Wochen-Reihen
+    w = pd.Series(c, index=idx).resample("W-FRI").last().dropna()
+    wc = w.to_numpy(float)
+    wema = _ema(wc, 13)
+    wmacd = _ema(wc, 12) - _ema(wc, 26)
+    wh = wmacd - _ema(wmacd, 9)
+    def up(a):   # Neigung: heute > Vorwoche
+        r = np.full(len(a), np.nan); r[1:] = np.sign(np.diff(a)); return r
+    W = pd.DataFrame({"ema_s": up(wema), "h_s": up(wh), "h": wh}, index=w.index).reindex(idx, method="ffill")
+    return {"fi2": fi2, "st14": st14, "ema13": ema13, "osma_d": osma_d,
+            "w_ema_s": W["ema_s"].to_numpy(), "w_h_s": W["h_s"].to_numpy(), "w_h": W["h"].to_numpy()}
+
+
+def elder_gate(P, v: Variant, buy: bool) -> np.ndarray:
+    """Signal-Tage der Elder-Varianten (steigende Flanke der Bedingung, Einstieg am Folgetag)."""
+    E, s = P.elder, (1.0 if buy else -1.0)
+    n = P.n
+    with np.errstate(invalid="ignore"):
+        if v.elder == "fi":
+            cond = (E["w_ema_s"] == s) & ((E["fi2"] < 0) if buy else (E["fi2"] > 0))
+        elif v.elder == "stoch":
+            cond = (E["w_h_s"] == s) & ((E["st14"] < 30) if buy else (E["st14"] > 70))
+        elif v.elder == "zero":
+            cond = (E["w_h_s"] == s) & ((E["w_h"] < 0) if buy else (E["w_h"] > 0)) & ((E["st14"] < 30) if buy else (E["st14"] > 70))
+        else:   # impulse: Tages-Farbe aus EMA13-Neigung + MACD-H-Neigung; Wochen-Zensur
+            e_s = np.r_[np.nan, np.sign(np.diff(E["ema13"]))]
+            h_s = np.r_[np.nan, np.sign(np.diff(E["osma_d"]))]
+            red, green = (e_s < 0) & (h_s < 0), (e_s > 0) & (h_s > 0)
+            w_red = (E["w_ema_s"] < 0) & (E["w_h_s"] < 0)
+            w_green = (E["w_ema_s"] > 0) & (E["w_h_s"] > 0)
+            d_bad, w_bad = (red, w_red) if buy else (green, w_green)
+            prev = np.zeros(n, bool); prev[1:] = d_bad[:-1]
+            return prev & ~d_bad & ~w_bad & np.isfinite(e_s) & np.isfinite(h_s)
+    cond = np.asarray(cond, bool)
+    prev = np.zeros(n, bool); prev[1:] = cond[:-1]
+    return cond & ~prev
+
+
 def gen_trades(P, v: Variant, side: str, lookup, fwd: int = FORWARD_DAYS, k: float = VOL_K) -> list[tuple]:
     n, c, o, ma = P.n, P.c, P.o, P.ma
     buy = side == "buy"
     with np.errstate(invalid="ignore"):
         gate = ((P.sr > 0) & (P.sr < v.rsi_th) & (P.sf < 10) & (P.ss < 15)) if buy else \
                ((P.sr > 1 - v.rsi_th) & (P.sf > 90) & (P.ss > 85))
-    if v.all4:            # strenge Regel: Oszillatoren + CCI + OsMA-Dreh, siehe all4_gate()
+    if v.elder:
+        gate = elder_gate(P, v, buy)
+    elif v.all4:            # strenge Regel: Oszillatoren + CCI + OsMA-Dreh, siehe all4_gate()
         gate = all4_gate(P, v, buy)
     elif not v.gate:        # reiner OsMA-Dreh: jeder Tag mit Dreh ist ein Signal (Cooldown verhindert Dubletten)
         tmp = P.turn_alt if v.macd_alt else (P.turn1 if v.turn_lookback == 1 else P.turn)
