@@ -60,6 +60,9 @@ class Variant:
     cooldown: int = SIGNAL_COOLDOWN
     rsi_th: float = 0.1              # StochRSI-Extremschwelle (Kauf < th, Verkauf > 1 - th)
     macd_alt: bool = False           # MACD(12,26,9) statt (70,200,9)
+    max_wait: int = MAX_ENTRY_WAIT   # so lange (Handelstage) wird nach Beginn der Extrem-Phase auf die Bestätigung gewartet
+    turn_lookback: int = 3           # so viele fallende Balken vor dem Dreh (Basis 3; 1 = schon ein fallender Balken genügt)
+    confirm_bars: int = 1            # MACD-Dreh gilt erst, wenn das Histogramm so viele Balken in Folge in Signalrichtung läuft
 
 
 VARIANTS = [
@@ -74,6 +77,14 @@ VARIANTS = [
     Variant("V8", "StochRSI-Schwelle 0,05", "Strengere Extreme", rsi_th=0.05),
     Variant("V9", "StochRSI-Schwelle 0,2", "Lockerere Extreme (mehr Signale)", rsi_th=0.2),
     Variant("V10", "MACD 12/26/9", "Schnellerer MACD für die Bestätigung", macd_alt=True),
+    Variant("V13", "Nur MACD, Wartezeit 60 Tage", "Deine Praxis: Extrem-Phasen dauern oft > 20 Tage (TUI-Chart), Kauf erst beim MACD-Dreh",
+            confirm="macd", max_wait=60),
+    Variant("V14", "Nur MACD, 2 Balken in Folge", "Strengerer Dreh: erst wenn das Histogramm 2 Tage steigt",
+            confirm="macd", confirm_bars=2),
+    Variant("V15", "Nur MACD, 3 Balken, Wartezeit 60", "Wie V13, aber Dreh muss sich über 3 Balken bestätigen",
+            confirm="macd", max_wait=60, confirm_bars=3),
+    Variant("V16", "Nur MACD, 1 fallender Balken genügt", "Dein Dreh: fallend -> steigend, ohne 3 Balken Vorlauf",
+            confirm="macd", max_wait=60, turn_lookback=1),
     Variant("V11", "V1 + V2 + V6", "Kombination der drei begründeten Filter",
             confirm="price", sell_down_only=True, min_price=5.0),
     Variant("V12", "V1 + V3 + V6", "wie V11, aber 3 % Preis-Bestätigung",
@@ -105,7 +116,8 @@ def prepare(ticker: str, raw: pd.DataFrame, fwd: int = FORWARD_DAYS) -> SimpleNa
     alt = compute_macd(df[["Close"]].copy(), fast=12, slow=26, signal=9)["OSMA"].to_numpy(float)
     idx = df.index
     return SimpleNamespace(
-        ticker=ticker, n=n, c=c, o=o, h=df["High"].to_numpy(float), l=df["Low"].to_numpy(float), ma=ma, valid=arr["valid"], turn=arr["turn"], turn_alt=macd_turn_series(alt),
+        ticker=ticker, n=n, c=c, o=o, h=df["High"].to_numpy(float), l=df["Low"].to_numpy(float), ma=ma, valid=arr["valid"], turn=arr["turn"], turn1=macd_turn_series(df["OSMA"].to_numpy(float), 1), turn_alt=macd_turn_series(alt),
+        osma=df["OSMA"].to_numpy(float), osma_alt=alt,
         sr=df["StochRSI_70"].to_numpy(float), sf=df["Stoch_Fast"].to_numpy(float), ss=df["Stoch_Slow"].to_numpy(float),
         sig=pd.Series(c).pct_change().rolling(60).std().to_numpy(),
         q=(idx.year * 4 + (idx.month - 1) // 3).to_numpy(), dates=idx.to_numpy("datetime64[ns]"), aw=aw,
@@ -200,20 +212,26 @@ def gen_trades(P, v: Variant, side: str, lookup, fwd: int = FORWARD_DAYS, k: flo
         if i - prev > v.cooldown:
             events.append(i)
         prev = i
-    turn = P.turn_alt if v.macd_alt else P.turn
+    turn = P.turn_alt if v.macd_alt else (P.turn1 if v.turn_lookback == 1 else P.turn)
+    osma = P.osma_alt if v.macd_alt else P.osma
     tdir = 1 if buy else -1
     h, l = P.h, P.l          # laufendes Hoch/Tief für die Extrem-Verfolgung
     rows, seen = [], set()
     for i in events:
         ext, j_entry, trigger = None, None, None
-        for j in range(i, min(i + MAX_ENTRY_WAIT, n - 1) + 1):
+        for j in range(i, min(i + v.max_wait, n - 1) + 1):
             if buy:
                 ext = l[j] if ext is None else min(ext, l[j])
             else:
                 ext = h[j] if ext is None else max(ext, h[j])
             if v.confirm in ("either", "macd") and turn[j] == tdir:
-                trigger, j_entry = "MACD", j
-                break
+                jj = j + v.confirm_bars - 1
+                if jj < n - 1 and all((osma[j + m] > osma[j + m - 1]) if buy else (osma[j + m] < osma[j + m - 1])
+                                      for m in range(1, v.confirm_bars)):
+                    for q in range(j + 1, jj + 1):
+                        ext = min(ext, l[q]) if buy else max(ext, h[q])
+                    trigger, j_entry = "MACD", jj
+                    break
             if v.confirm in ("either", "price"):
                 if buy and c[j] > ext * (1 + v.price_pct / 100):
                     trigger, j_entry = "Preis", j
