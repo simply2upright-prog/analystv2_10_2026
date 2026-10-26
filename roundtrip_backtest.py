@@ -41,7 +41,7 @@ CLIP_PP = 300.0
 
 ENTRIES = {"S1": "4/4 am selben Tag", "S2": "4/4, StochRSI/Stoch vor ≤10 T."}
 EXITS = {"A": "Gegensignal 4/4 (selber Tag)", "B": "Gegensignal prior-Regel", "T": "Trailing-Stopp 3×ATR"}
-COLS = ["entry_key", "exit_key", "ticker", "side", "entry_date", "exit_date", "days", "ret", "b_ret", "mae", "trend"]
+COLS = ["entry_key", "exit_key", "ticker", "side", "entry_date", "exit_date", "days", "ret", "b_ret", "mae", "trend", "open"]
 
 
 def _gate(P, buy: bool, key: str) -> np.ndarray:
@@ -116,7 +116,18 @@ def run_ticker(P, buy: bool) -> list[tuple]:
                         exit_i = j
                         break
                 if exit_i is None:
-                    break                      # Position bis Datenende offen -> nicht gezählt
+                    # Position bis Datenende offen: zum letzten Schlusskurs bewertet und als "offen" markiert. Sie wegzulassen würde
+                    # die Verlierer (nie ein Gegensignal) aussortieren und das Ergebnis nach oben verzerren.
+                    if n - 1 - (i + 1) < 5 or P.aw[i + 1:n].any() or not np.isfinite(c[-1]):
+                        break
+                    L = n - 1 - (i + 1)
+                    ret = sgn * (c[-1] / e - 1) * 100
+                    span = slice(i + 1, n)
+                    mae = (min(l[span].min() / e - 1, 0) if buy else min(1 - h[span].max() / e, 0)) * 100
+                    up = bool(c[i] > P.ma[i]) if np.isfinite(P.ma[i]) else False
+                    rows.append((ek, xk, P.ticker, side, P.dates[i + 1], P.dates[n - 1], L,
+                                 float(np.clip(ret, -100, CLIP_PP)), base.get(L, up), float(mae), "up" if up else "down", True))
+                    break
                 x = o[exit_i + 1]
                 if not (np.isfinite(x) and x > 0):
                     i = exit_i + 1
@@ -131,7 +142,7 @@ def run_ticker(P, buy: bool) -> list[tuple]:
                 up = bool(c[i] > P.ma[i]) if np.isfinite(P.ma[i]) else False
                 b = base.get(L, up)
                 rows.append((ek, xk, P.ticker, side, P.dates[i + 1], P.dates[exit_i + 1], L,
-                             float(np.clip(ret, -100, CLIP_PP)), b, float(mae), "up" if up else "down"))
+                             float(np.clip(ret, -100, CLIP_PP)), b, float(mae), "up" if up else "down", False))
                 i = exit_i + 1
     return rows
 
@@ -174,32 +185,35 @@ def build_report(tr: pd.DataFrame, meta: dict, split: str) -> tuple[str, dict]:
     tr["entry_date"] = pd.to_datetime(tr["entry_date"])
     L = ["# Rundreisen: Einstieg beim Signal, Ausstieg beim Gegensignal", "",
          f"Stand {meta['created']} · {meta['n_tickers']} Ticker · {meta['period']} · Training < {split} / Test ab {split}", "",
-         "Einstieg/Ausstieg jeweils zum Open des Folgetags, keine Aufstockung, offene Positionen am Datenende ausgelassen. "
+         "Einstieg/Ausstieg jeweils zum Open des Folgetags, keine Aufstockung. Positionen ohne Gegensignal bis Datenende (offen) sind enthalten und zum letzten Schlusskurs bewertet; die vorletzte Spalte zeigt zum Vergleich nur die abgeschlossenen. "
          "**Überschuss** = Rendite des Trades minus Ø Rendite gleich langer Fenster desselben Tickers im gleichen Trendzustand (Prozentpunkte je Trade). "
          "Kein Abzug von Kosten.", ""]
     summ = {}
     for side, name, hint in (("buy", "LONG (Kaufsignal → Verkaufssignal)", ""), ("sell", "SHORT (Verkaufssignal → Kaufsignal)", "")):
         t = tr[tr["side"] == side]
         L += [f"## {name}", "",
-              "| Einstieg | Ausstieg | Trades Tr./Test | Ø Haltedauer (Tage) | Trefferquote | Ø Rendite | Ø Erwartung | Überschuss Tr. (t) | Überschuss Test (t) | Median-Überschuss | Ø größter Rückschlag | Verdikt |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "| Einstieg | Ausstieg | Trades Tr./Test (davon offen) | Ø Haltedauer (Tage) | Trefferquote | Ø Rendite | Ø Erwartung | Überschuss Tr. (t) | Überschuss Test (t) | Median-Überschuss | Ø größter Rückschlag | Überschuss nur abgeschlossene Tr./Test | Verdikt |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for ek in ENTRIES:
             for xk in EXITS:
                 d = t[(t["entry_key"] == ek) & (t["exit_key"] == xk)]
                 a, b, al = agg(d[d["entry_date"] < sp]), agg(d[d["entry_date"] >= sp]), agg(d)
-                summ[f"{side}:{ek}:{xk}"] = {"train": a, "test": b, "all": al}
+                dc = d[~d["open"]]
+                ac, bc = agg(dc[dc["entry_date"] < sp]), agg(dc[dc["entry_date"] >= sp])
+                n_open = int(d["open"].sum())
+                summ[f"{side}:{ek}:{xk}"] = {"train": a, "test": b, "all": al, "closed_train": ac, "closed_test": bc, "n_open": n_open}
                 if al.get("n", 0) == 0:
-                    L.append(f"| {ek} | {xk} | 0 | – | – | – | – | – | – | – | – | keine Trades |")
+                    L.append(f"| {ek} | {xk} | 0 | – | – | – | – | – | – | – | – | – | keine Trades |")
                     continue
                 cell = lambda s: "–" if s.get("n", 0) == 0 else f"{_f(s['exc'])} ({_f(s['t'], '+.1f')})"
-                L.append(f"| {ek} {ENTRIES[ek]} | {xk} {EXITS[xk]} | {a.get('n', 0)} / {b.get('n', 0)} | {_f(al['days'], '.0f')} | {_f(al['win'], '.0f')} % | "
-                         f"{_f(al['ret'])} % | {_f(al['b_ret'])} % | {cell(a)} | {cell(b)} | {_f(al['exc_med'])} | {_f(al['mae'])} % | {verdict(a, b)} |")
+                L.append(f"| {ek} {ENTRIES[ek]} | {xk} {EXITS[xk]} | {a.get('n', 0)} / {b.get('n', 0)} ({n_open}) | {_f(al['days'], '.0f')} | {_f(al['win'], '.0f')} % | "
+                         f"{_f(al['ret'])} % | {_f(al['b_ret'])} % | {cell(a)} | {cell(b)} | {_f(al['exc_med'])} | {_f(al['mae'])} % | {cell(ac)} / {cell(bc)} | {verdict(a, b)} |")
         L.append("")
     L += ["## Wie liest man das?", "",
           "- Das ist die Strategie als ganze Rundreise: es gibt keinen festen Horizont, die Haltedauer ergibt sich aus dem Gegensignal.",
           "- **Ø Erwartung** = was ein Zufallseinstieg mit gleich langer Haltedauer im selben Ticker und Trend im Schnitt gebracht hätte. Der **Überschuss** ist der eigentliche Vorteil.",
           "- Ein Vorteil gilt erst, wenn er in Training UND Test mit Cluster-t > 2 auftaucht. Wenige, lange Trades machen die Statistik wackelig (große Streuung).",
-          "- Survivorship-Bias der Tickerliste (heutige Titel), keine Kosten, Short ohne Leihkosten, Gegensignale kommen oft spät oder gar nicht (offene Trades fehlen)."]
+          "- Survivorship-Bias der Tickerliste (heutige Titel), keine Kosten, Short ohne Leihkosten, Gegensignale kommen oft spät oder gar nicht (offene Trades sind zum letzten Kurs bewertet)."]
     return "\n".join(L), summ
 
 
@@ -237,7 +251,7 @@ def run(period: str, out_dir: str, limit: int = 0, tickers: list[str] | None = N
         f.write(report)
     with open(os.path.join(out_dir, "roundtrip_summary.json"), "w", encoding="utf-8") as f:
         json.dump(summ, f, ensure_ascii=False, indent=1, default=lambda o: None if o != o else float(o))
-    trades[(trades["entry_key"] == "S1") & (trades["exit_key"] == "A")].to_csv(os.path.join(out_dir, "roundtrip_trades_S1A.csv"), index=False)
+    trades[(trades["entry_key"] == "S1") & (trades["exit_key"].isin(["A", "B"]))].to_csv(os.path.join(out_dir, "roundtrip_trades_S1.csv"), index=False)
     log.info("Fertig: %d Trades → %s", len(trades), out_dir)
     return trades
 
