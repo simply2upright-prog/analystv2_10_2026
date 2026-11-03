@@ -312,3 +312,8 @@ signal_date,scan_utc,region,ticker,name,label,side,score,first_in_phase,price,st
 2026-10-30,2026-10-30 21:43,Europa/Asien,TELIA.ST,Telia Company AB,OVERBOUGHT,sell,2,True,49.369998931884766,1.0,100.0,89.1,134.0,,up,,5,,,10.5,,,,,,,,,,
 2026-10-30,2026-10-30 21:43,Europa/Asien,UU.L,UNITED UTILITIES GRO,OVERBOUGHT,sell,2,False,1534.0,1.0,96.6,95.5,122.5,,up,,6,,,4.02,,,,,,,,,,
 2026-10-30,2026-10-30 21:43,Europa/Asien,WKL.AS,WOLTERS KLUWER,OVERBOUGHT,sell,3,False,87.0,0.915,92.4,91.7,79.6,up,up,,4,,,25.64,,,,,,,,,,
+2026-10-30,2026-11-03 00:03,Europa/Asien,0175.HK,GEELY AUTO,OVERSOLD,buy,2,False,13.710000038146973,0.026,7.2,4.6,-138.1,,down,,4,,,-5.25,,,,,,,,,,
+2026-10-30,2026-11-03 00:03,Europa/Asien,0200.HK,MELCO INT'L DEV,OVERSOLD,buy,3,False,2.319999933242798,0.066,5.7,2.4,-110.0,up,down,,4,,,-13.24,,,,,,,,,,
+2026-10-30,2026-11-03 00:03,Europa/Asien,9888.HK,BIDU-W,OVERSOLD,buy,3,False,75.6500015258789,0.082,5.5,4.5,-93.1,,down,,4,,,1.79,,,,,,,,,,
+2026-10-30,2026-11-03 00:03,Europa/Asien,CSL.AX,CSL FPO [CSL],OVERBOUGHT,sell,2,False,201.16000366210938,0.992,98.1,97.6,108.1,,up,,3,,,15.49,,,,,,,,,,
+2026-10-30,2026-11-03 00:03,Europa/Asien,FMG.AX,FORTESCUE FPO [FMG],OVERSOLD,buy,2,True,14.270000457763672,0.012,2.7,5.8,-110.1,,down,,7,,,-12.35,,,,,,,,,,
